@@ -1,155 +1,165 @@
 # HANDOFF.md
 
 **Last updated:** 2026-07-09
-**Milestone completed:** Milestone 1 — Project Scaffolding ✅
+**Milestone completed:** Milestone 2 — Wake Word Detection ✅
 
 ---
 
 ## Summary of work completed
 
-Milestone 1 is fully complete: the Iris repository was initialized, the
-full folder structure created, dependency management configured, a working
-config + logging system built, a minimal PySide6 application that launches
-successfully, and a placeholder Aura renderer interface (structure only, no
-actual rendering). All documentation files were created.
+Milestone 2 is complete: microphone audio capture, wake word detection
+(OpenWakeWord), and full wiring into `main.py` with proper thread-safety
+and graceful degradation. Built in three incremental parts:
 
-Work was done in four incremental parts within a single session:
-1. Repo init, folder structure, `pyproject.toml`, `.gitignore`
-2. Config system (`config/`) + logging (`utils/logger.py`) — smoke-tested
-3. `main.py` entry point, minimal PySide6 window, Aura placeholder interface
-   (states, abstract renderer, no-op renderer, controller) — launch-tested
-4. Documentation (this file + README + docs/)
+1. `voice/audio_stream.py` — `MicrophoneStream`, raw 16kHz mic capture via
+   `sounddevice`. Smoke-tested (construction, device listing).
+2. `voice/wake_word.py` — `WakeWordDetector` wrapping OpenWakeWord.
+   **Tested against real speech audio** (not just synthetic/silent
+   frames): correctly detected a real "Hey Mycroft" utterance and produced
+   zero false positives on unrelated "Alexa" speech.
+3. `config/schema.py` `VoiceSettings` + `voice/service.py`
+   `VoiceActivationService` + `app/wake_word_bridge.py` `WakeWordBridge` +
+   full `main.py` wiring. Tested three ways: with speech deps + no mic
+   hardware (graceful error handling), in a clean core-only venv with no
+   speech deps at all (graceful ImportError handling), and the underlying
+   detection logic against real audio (from part 2).
 
 ## Files created
 
 ```
 iris/
-├── .gitignore
-├── README.md
-├── pyproject.toml
-├── main.py
 ├── app/
-│   ├── __init__.py
-│   └── main_window.py
-├── aura/
-│   ├── __init__.py
-│   ├── controller.py
-│   ├── states.py
-│   ├── animations/__init__.py
-│   ├── renderer/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   └── null_renderer.py
-│   ├── shaders/__init__.py
-│   └── themes/__init__.py
-├── automation/__init__.py
-├── config/
-│   ├── __init__.py
-│   ├── default_config.yaml
-│   ├── paths.py
-│   ├── schema.py
-│   └── settings.py
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DECISIONS.md
-│   ├── ROADMAP.md
-│   └── TODO.md
-├── llm/__init__.py
-├── memory/__init__.py
-├── overlay/__init__.py
-├── speech/__init__.py
-├── tests/__init__.py
-├── utils/
-│   ├── __init__.py
-│   └── logger.py
-├── vision/__init__.py
-└── voice/__init__.py
+│   └── wake_word_bridge.py       (new)
+├── voice/
+│   ├── audio_stream.py           (new)
+│   ├── wake_word.py              (new)
+│   └── service.py                (new)
 ```
 
 ## Files modified
 
-None — this was the initial scaffolding session, everything above is new.
+- `main.py` — wired voice activation in; imports `voice.service`
+  defensively (try/except ImportError) since it depends on optional
+  `speech` extras
+- `config/schema.py` — added `VoiceSettings`, registered on `AppSettings`
+- `config/default_config.yaml` — added `voice:` section
+- `pyproject.toml` — added `sounddevice` to the `speech` extras group
+  (alongside existing `faster-whisper`, `openwakeword`)
+- `README.md` — documented `pip install -e ".[speech]"` and wake word testing
+- `docs/ROADMAP.md` — Milestone 2 marked complete
+- `docs/ARCHITECTURE.md` — documented `voice/` module split and the Qt
+  signal threading pattern
+- `docs/DECISIONS.md` — two new entries: Qt signal bridge for thread
+  safety, graceful degradation for voice activation
+- `docs/TODO.md` — rewritten for Milestone 3 (speech-to-text) next steps
+- `.gitignore` — added explicit `*.egg-info` pattern
 
 ## Dependencies added
 
-Core (installed, in `pyproject.toml` `[project] dependencies`):
-- `PySide6>=6.7.0`
-- `pydantic>=2.7.0`
-- `PyYAML>=6.0.1`
+Added to the existing `speech` optional extras group in `pyproject.toml`
+(not core — still opt-in via `pip install -e ".[speech]"`):
+- `sounddevice>=0.4.6` (new)
+- `openwakeword>=0.6.0` (was already declared, now actually used)
 
-Optional extras (declared, **not yet installed** — will be installed as
-their milestones are built):
-- `speech`: `faster-whisper>=1.0.0`, `openwakeword>=0.6.0`
-- `llm`: `llama-cpp-python>=0.2.90`
-- `vision`: `mss>=9.0.1`, `opencv-python>=4.10.0`, `onnxruntime-gpu>=1.18.0`
-- `windows`: `pywin32>=306` (Windows only)
-- `dev`: `pytest`, `black`, `ruff`, `mypy`
+No changes to core dependencies.
 
 ## Important implementation details
 
-- **Config load order:** `config/default_config.yaml` (bundled) →
-  `%APPDATA%/Iris/config/config.yaml` (user, created on first run) → merged
-  → validated against `AppSettings` (Pydantic). On non-Windows dev machines,
-  user data falls back to a local `.iris_data/` folder (gitignored).
-- **Aura decoupling:** All Aura interaction goes through
-  `aura.controller.AuraController.set_state(AuraState)`. No other module
-  should import `aura.renderer.*` directly. Current renderer is
-  `NullAuraRenderer` — logs state changes, renders nothing. This is
-  intentional (see `docs/DECISIONS.md`).
-- **Logging:** `utils.logger.setup_logging(settings.logging)` must be called
-  once, early, in `main.py` before any other module logs. It's idempotent
-  (clears existing handlers) so safe to call again in tests.
-- **App data location:** Windows → `%APPDATA%\Iris\`. Linux/macOS (dev) →
-  `<repo_root>/.iris_data/` (gitignored, safe to delete anytime — it's
-  regenerated on next run).
+- **Threading:** `sounddevice`'s audio callback runs on a background
+  thread. Wake word detections cross into Qt's main thread via
+  `app/wake_word_bridge.py`'s `WakeWordBridge` (`QObject` + `Signal`), not
+  a direct function call. This is required correctness now, and will be
+  load-bearing once Aura does real GPU rendering (Milestone 6) — see
+  `docs/DECISIONS.md`.
+- **Graceful degradation, two layers:**
+  1. If the `speech` extras aren't installed, `main.py` catches the
+     `ImportError` on `from voice.service import VoiceActivationService`
+     and continues without voice activation (logs a warning).
+  2. If they *are* installed but starting the mic stream fails (no
+     device, permission denied, etc.), `VoiceActivationService.start()`
+     catches the exception, logs it, returns `False`, and `main.py`
+     continues running (sets Aura to `ERROR` state).
+  Neither case crashes the app.
+- **Wake word model resolution:** `voice/wake_word.py:resolve_model()`
+  accepts either a bundled stock model name (currently configured as
+  `"hey_jarvis"`, the placeholder) or a full path to a custom `.onnx` file.
+  Stock names trigger a one-time download via OpenWakeWord's
+  `download_models()` (cached locally after first run — see
+  `docs/DECISIONS.md`). Swapping to a trained "Hey Iris" model later is a
+  config change only — set `voice.wake_word_model` in `config.yaml` to the
+  model's file path, which skips the download path entirely.
+- **Detection debouncing:** `WakeWordDetector` requires 2 consecutive
+  frames (~160ms) above the confidence threshold (default 0.5) before
+  firing, to avoid single-frame noise spikes causing false triggers.
 
 ## Current folder structure
 
-See "Files created" above — that *is* the current full structure.
+See "Files created" above for what's new; full structure otherwise
+unchanged from Milestone 1's `HANDOFF.md`.
 
 ## Known issues
 
-- None blocking. One cosmetic note: launching under `QT_QPA_PLATFORM=offscreen`
-  (used for testing in this sandboxed environment, which has no display)
-  prints `This plugin does not support propagateSizeHints()` to stderr.
-  This is expected for the offscreen Qt plugin and should not occur when
-  running normally on Windows with a real display. If it does appear on
-  the target Windows machine, investigate — it should not.
-- `tests/` package exists but is currently empty. Flagged in `docs/TODO.md`
-  as a loose end to address before Milestone 2 grows in scope.
+- None blocking. Same offscreen-Qt-plugin cosmetic stderr line as
+  Milestone 1 when testing in this sandbox (`propagateSizeHints()` warning)
+  — expected, not a real issue, shouldn't occur on Windows with a real display.
+- **RESOLVED (post-handoff correction):** Real testing on the actual
+  Windows machine surfaced a bug this session's dev-sandbox testing missed:
+  `voice/wake_word.py` was written against openWakeWord's older bundled-models
+  API. The pip-installed `openwakeword==0.6.0` no longer bundles stock
+  model files at all — they must be explicitly downloaded once via
+  `openwakeword.utils.download_models()`. This caused a `ValueError` crash
+  on first launch on Windows. Fixed by rewriting `resolve_model()` to
+  explicitly trigger the download for stock model names and always pass
+  `inference_framework="onnx"`. Re-verified against real speech audio
+  (`hey_mycroft` test clip, score 1.000) and a simulated fresh-install
+  (model files deleted, reconstructed from scratch, download re-triggered
+  successfully) in the dev sandbox after the fix, using the exact
+  `openwakeword==0.6.0` version pulled fresh from PyPI (not a stale cached
+  version, which is what caused this to be missed initially). See
+  `docs/DECISIONS.md` for the full writeup.
+- **Real end-to-end microphone verification is still pending** — the fix
+  above was verified via pre-recorded audio and via confirming the full
+  `main.py` startup sequence completes correctly up to (and gracefully
+  past) the point where this sandbox's lack of mic hardware causes
+  `VoiceActivationService.start()` to fail. **Saying "Hey Jarvis" into a
+  real, live microphone on the Windows machine has not yet been confirmed
+  to work post-fix — this is the next thing to verify.**
+- `tests/` package is still empty. Flagged again in `docs/TODO.md` — now
+  more pressing since `voice/` has real logic worth protecting with
+  regression tests before Milestone 3 adds more surface area.
 
 ## Testing performed
 
-1. **Config + logging smoke test:** Loaded settings, verified `app_name`,
-   `version`, `aura.theme` values, confirmed user config file was
-   auto-generated at first run, confirmed logging output formatted
-   correctly to console. PASS.
-2. **Application launch test:** Constructed `QApplication`, `AuraController`
-   with `NullAuraRenderer`, and `MainWindow` under an offscreen Qt platform
-   (no display available in this dev sandbox). Verified: window becomes
-   visible (`isVisible() == True`), window title reads `"Iris v0.1.0"`,
-   Aura reaches `AuraState.IDLE`, and both Aura and the app shut down
-   cleanly with no exceptions. PASS.
-3. Both test runs' generated runtime artifacts (`.iris_data/`, `__pycache__/`)
-   were deleted afterward — they are gitignored and not part of the repo.
-
-**Not yet tested:** actual display rendering on Windows (this dev
-environment has no GUI/display — only offscreen/headless testing was
-possible). The next session on a real Windows machine should do a real
-`python main.py` run and visually confirm the window appears.
+1. **`MicrophoneStream` construction/API smoke test** — PASS (no real
+   hardware available in this sandbox to test actual capture).
+2. **`WakeWordDetector` against real speech audio** (cloned test fixtures
+   from the openWakeWord GitHub repo, deleted after use):
+   - Real "Hey Mycroft" utterance → 2 detections, scores 0.967 and 0.998. PASS.
+   - Real "Alexa" utterance (different phrase) → 0 detections. PASS (no false positive).
+3. **Full `main.py` end-to-end, speech deps installed, no mic hardware:**
+   Confirmed the app logs the `PortAudioError`, sets Aura to `ERROR`, and
+   keeps running (didn't crash) via a real subprocess launch. PASS.
+4. **Full `main.py` end-to-end, core-only venv (no speech extras):**
+   Built a clean venv with only `pip install -e .`, confirmed
+   `openwakeword`/`sounddevice` were absent, ran `main.py`, confirmed it
+   logged a warning and launched successfully anyway. PASS.
+5. Config schema smoke-tested after adding `VoiceSettings` — loads and
+   validates correctly, `voice.wake_word_model` defaults to `"hey_jarvis"`.
+6. All test artifacts (`.iris_data/`, `__pycache__/`, cloned test-fixture
+   repo, temporary core-only venv) cleaned up afterward.
 
 ## Current project status
 
-Milestone 1 complete and verified (within the limits of a headless dev
-sandbox). Repo is a clean, git-initialized Python project with no
-uncommitted cruft (test artifacts cleaned up). Ready for Milestone 2.
+Milestone 2 complete and verified as thoroughly as this headless,
+mic-less dev sandbox allows. The one meaningful gap is real-microphone
+verification, called out above and in the next-session prompt below.
 
 ## Next milestone
 
-**Milestone 2 — Wake Word Detection.** See `docs/ROADMAP.md` for full
-scope and `docs/TODO.md` for the specific next actions, including the
-open research question of whether a custom-trained "Hey Iris" wake word
-model is needed vs. adapting a stock OpenWakeWord model.
+**Milestone 3 — Speech-to-Text**, integrating Faster-Whisper. See
+`docs/ROADMAP.md` for scope and `docs/TODO.md` for specific next actions,
+including reusing `voice/audio_stream.py`'s `MicrophoneStream` for the
+post-wake-word listening window and deciding on end-of-utterance detection.
 
 ## Ready-to-copy prompt for the next session
 
@@ -161,13 +171,20 @@ Before writing any code:
 2. Read every file inside /docs
 3. Understand the current project state
 
-Milestone 1 (project scaffolding) is complete and verified. We are now
-starting Milestone 2 — Wake Word Detection, as scoped in docs/ROADMAP.md
-and docs/TODO.md.
+Milestone 2 (wake word detection) is complete but has one unverified gap:
+real-microphone testing was not possible in the previous session's dev
+sandbox (no audio hardware). Before starting Milestone 3, please:
+  1. Run `pip install -e ".[speech]"` and `python main.py` on this machine
+  2. Say "Hey Jarvis" into the real microphone
+  3. Confirm in the logs that Aura transitions to LISTENING
+  4. Report back whether this worked before we proceed
+
+Once that's confirmed, start Milestone 3 — Speech-to-Text, as scoped in
+docs/ROADMAP.md and docs/TODO.md.
 
 Work incrementally, in small parts (not all at once — confirm progress
 with me between parts). Do not begin implementing anything beyond
-Milestone 2's scope. End the session by updating HANDOFF.md and
+Milestone 3's scope. End the session by updating HANDOFF.md and
 docs/TODO.md, and only docs/ROADMAP.md / docs/ARCHITECTURE.md /
 docs/DECISIONS.md / README.md if something actually changed.
 ```

@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 app/__init__.py
 app/main_window.py
+app/wake_word_bridge.py
 aura/__init__.py
 aura/controller.py
 aura/states.py
@@ -30,3 +31,6 @@ utils/__init__.py
 utils/logger.py
 vision/__init__.py
 voice/__init__.py
+voice/audio_stream.py
+voice/service.py
+voice/wake_word.py

@@ -16,12 +16,12 @@ update it as milestones complete or priorities shift.
 - [x] Aura placeholder renderer interface (structure only, no rendering)
 - [x] Documentation files
 
-## Milestone 2 — Wake Word Detection (planned)
+## Milestone 2 — Wake Word Detection ✅ COMPLETE
 
-- [ ] Integrate OpenWakeWord
-- [ ] Microphone input handling
-- [ ] Wake word triggers Aura → LISTENING state transition
-- [ ] Configurable wake word / sensitivity in settings
+- [x] Integrate OpenWakeWord
+- [x] Microphone input handling
+- [x] Wake word triggers Aura → LISTENING state transition
+- [x] Configurable wake word / sensitivity in settings
 
 ## Milestone 3 — Speech-to-Text (planned)
 

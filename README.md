@@ -9,7 +9,7 @@ it with local models, and guides you visually and by voice.
 
 ## Status
 
-🚧 Early development. Milestone 1 (project scaffolding) complete. See
+🚧 Early development. Milestone 2 (wake word detection) complete. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/TODO.md`](docs/TODO.md) for
 what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full current
 state for anyone (human or AI) picking up development.
@@ -38,15 +38,27 @@ ONNX Runtime, SQLite.
 ## Getting started (development)
 
 ```bash
-# Core dependencies only (enough for Milestone 1's placeholder app)
+# Core dependencies only (enough to launch the app, no wake word detection)
 pip install -e .
 
 # Run
 python main.py
 ```
 
-Heavier dependencies (speech, LLM, vision) are declared as optional extras
-in `pyproject.toml` and will be installed as those milestones are built:
+To enable wake word detection ("Hey Jarvis" as a placeholder — a custom
+"Hey Iris" model can be trained later at https://openwakeword.com/train and
+dropped in via config with no code changes):
+
+```bash
+pip install -e ".[speech]"
+python main.py
+```
+
+Say "Hey Jarvis" — Aura should transition to the LISTENING state (visible
+in the console log for now; real visual feedback lands in Milestone 6).
+
+Other heavy dependencies (LLM, vision) are declared as optional extras too
+and will be needed as those milestones are built:
 
 ```bash
 pip install -e ".[speech,llm,vision,windows,dev]"

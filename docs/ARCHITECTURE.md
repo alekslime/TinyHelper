@@ -15,7 +15,7 @@ iris/
 │   ├── shaders/     GPU shader code for the ambient glow (future milestone).
 │   ├── themes/      Theme definitions (colors, glow intensity, etc.) (future).
 │   └── animations/  Animation logic for state transitions, guidance cues (future).
-├── voice/           Wake word detection, voice activation (future milestone).
+├── voice/           Wake word detection (OpenWakeWord) + mic capture. Done.
 ├── speech/          Speech-to-text (Faster-Whisper) (future milestone).
 ├── llm/             Local LLM integration (llama.cpp) (future milestone).
 ├── vision/           Screen capture + vision model integration (future milestone).
@@ -69,6 +69,34 @@ and validated against the `AppSettings` Pydantic schema in
 (`speech`, `llm`, `vision`, `windows`) rather than core dependencies. They
 get installed as the milestones that need them are built, keeping the
 environment lean during early development.
+
+This is enforced, not just documented: `main.py` imports `voice.service`
+inside a `try/except ImportError` block, so Iris still launches correctly
+with only core dependencies installed — voice activation is simply
+unavailable in that case, logged as a warning rather than a crash.
+
+### Voice module structure (Milestone 2)
+
+`voice/` is split into three layers, each independently testable:
+
+- `voice/audio_stream.py` — `MicrophoneStream`: raw 16kHz mono audio
+  capture via `sounddevice`. Knows nothing about wake words.
+- `voice/wake_word.py` — `WakeWordDetector`: wraps OpenWakeWord's `Model`.
+  Takes audio frames, calls back on detection. Knows nothing about
+  microphones or Qt.
+- `voice/service.py` — `VoiceActivationService`: wires the above two
+  together and owns their lifecycle (`start()`/`stop()`). This is the only
+  piece `main.py` talks to.
+
+### Wake word detections cross threads via a Qt signal
+
+`sounddevice`'s audio callback runs on a background thread. `main.py`
+bridges detections onto Qt's main thread via `app/wake_word_bridge.py`'s
+`WakeWordBridge`, a `QObject` with a `Signal`. Qt automatically queues
+cross-thread signal emissions for delivery on the receiving object's
+thread, which is the standard, safe way to get data from a worker thread
+to the GUI thread. See `docs/DECISIONS.md` for why this matters even though
+`NullAuraRenderer` doesn't touch Qt/GPU resources yet.
 
 ## Data flow (target, once all milestones land)
 
