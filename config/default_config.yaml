@@ -1,0 +1,22 @@
+# Iris default configuration.
+#
+# This file is bundled with the repository and used as the source of
+# defaults. It is NOT edited at runtime. On first launch, Iris copies the
+# active values into a user-writable config.yaml (see config/paths.py).
+# Edit that generated file to change settings — not this one, unless you are
+# changing the defaults for all users.
+
+app_name: Iris
+version: "0.1.0"
+first_run: true
+
+logging:
+  level: INFO
+  console: true
+  file: true
+  max_bytes: 2000000
+  backup_count: 5
+
+aura:
+  enabled: true
+  theme: default

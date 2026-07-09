@@ -1,0 +1,92 @@
+Metadata-Version: 2.4
+Name: iris
+Version: 0.1.0
+Summary: Iris — a fully local, voice-first AI desktop copilot for Windows.
+Author: Iris Project
+License: MIT
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: PySide6>=6.7.0
+Requires-Dist: pydantic>=2.7.0
+Requires-Dist: PyYAML>=6.0.1
+Provides-Extra: speech
+Requires-Dist: faster-whisper>=1.0.0; extra == "speech"
+Requires-Dist: openwakeword>=0.6.0; extra == "speech"
+Provides-Extra: llm
+Requires-Dist: llama-cpp-python>=0.2.90; extra == "llm"
+Provides-Extra: vision
+Requires-Dist: mss>=9.0.1; extra == "vision"
+Requires-Dist: opencv-python>=4.10.0; extra == "vision"
+Requires-Dist: onnxruntime-gpu>=1.18.0; extra == "vision"
+Provides-Extra: windows
+Requires-Dist: pywin32>=306; sys_platform == "win32" and extra == "windows"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2.0; extra == "dev"
+Requires-Dist: black>=24.4.0; extra == "dev"
+Requires-Dist: ruff>=0.4.0; extra == "dev"
+Requires-Dist: mypy>=1.10.0; extra == "dev"
+
+# Iris
+
+A fully local, voice-first AI desktop copilot for Windows.
+
+Iris runs entirely on your machine — no cloud inference, no paid APIs, no
+subscriptions, no external AI providers. You say "Hey Iris," ask a question
+about what's on your screen, and Iris captures a screenshot, reasons about
+it with local models, and guides you visually and by voice.
+
+## Status
+
+🚧 Early development. Milestone 1 (project scaffolding) complete. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/TODO.md`](docs/TODO.md) for
+what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full current
+state for anyone (human or AI) picking up development.
+
+## Core principles
+
+- **Everything runs locally.** No cloud inference, no paid APIs, no subscriptions.
+- **Offline-first.** Iris works with no internet connection.
+- **Privacy by default.** No continuous screen or audio monitoring. Screenshots
+  are analyzed and discarded unless you explicitly choose to keep one.
+- **Modular.** Every major component (voice, vision, LLM, Aura) is swappable.
+
+## Target hardware
+
+Developed and tuned for:
+- RTX 3070 Ti (8GB VRAM)
+- Ryzen 7 5700X
+- 32GB DDR4 RAM
+- Windows 11
+
+## Tech stack
+
+Python 3.12+, PySide6, llama.cpp, Faster-Whisper, OpenWakeWord, MSS, OpenCV,
+ONNX Runtime, SQLite.
+
+## Getting started (development)
+
+```bash
+# Core dependencies only (enough for Milestone 1's placeholder app)
+pip install -e .
+
+# Run
+python main.py
+```
+
+Heavier dependencies (speech, LLM, vision) are declared as optional extras
+in `pyproject.toml` and will be installed as those milestones are built:
+
+```bash
+pip install -e ".[speech,llm,vision,windows,dev]"
+```
+
+## Project structure
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full breakdown of
+the folder structure and how modules relate to each other.
+
+## Contributing
+
+Iris is built incrementally, one milestone at a time, with documentation
+kept in sync at every step. See `docs/DECISIONS.md` for the reasoning
+behind key architectural choices.

@@ -1,6 +1,3 @@
-# TinyHelper
-magic. 
-
 # Iris
 
 A fully local, voice-first AI desktop copilot for Windows.
@@ -65,4 +62,3 @@ the folder structure and how modules relate to each other.
 Iris is built incrementally, one milestone at a time, with documentation
 kept in sync at every step. See `docs/DECISIONS.md` for the reasoning
 behind key architectural choices.
-
