@@ -33,6 +33,7 @@ class VoiceActivationService:
             on_detected=self._handle_detection,
             threshold=settings.detection_threshold,
             consecutive_frames_required=settings.consecutive_frames_required,
+            cooldown_seconds=settings.cooldown_seconds,
         )
         self._mic = MicrophoneStream(
             on_frame=self._detector.process_frame,

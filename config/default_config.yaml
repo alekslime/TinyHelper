@@ -25,4 +25,5 @@ voice:
   wake_word_model: hey_jarvis  # placeholder until a custom "Hey Iris" model is trained
   detection_threshold: 0.5
   consecutive_frames_required: 2
+  cooldown_seconds: 1.5
   input_device: null  # null = system default microphone

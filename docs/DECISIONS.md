@@ -135,6 +135,31 @@ local cache. Once a custom-trained "Hey Iris" model replaces the stock
 placeholder, this download path won't be exercised at all (custom models
 are loaded directly from a user-provided file path).
 
+---
+
+## 2026-07-09 — Wake word detection needs a cooldown, not just consecutive-frame confirmation
+
+**Decision:** `WakeWordDetector` suppresses further detections for a given
+model for `cooldown_seconds` (default 1.5s) after firing once, in addition
+to the existing consecutive-frames-above-threshold confirmation.
+
+**Why:** Real-microphone testing (on the actual Windows target machine)
+surfaced that a single spoken "Hey Jarvis" produced 3-4 separate detection
+callbacks, not one. Root cause: a spoken wake word stays above the
+confidence threshold for roughly 0.5-1 second — many more frames than the
+`consecutive_frames_required` streak needs to fire — so the streak
+re-crosses the confirmation count repeatedly within one utterance.
+Consecutive-frame confirmation solves a different problem (rejecting
+single-frame noise spikes) and doesn't address this one. Verified the fix
+directly: the same real audio clip produced 3 detections with cooldown
+disabled and exactly 1 with it enabled.
+
+**Alternative considered:** Requiring a much longer consecutive-frame
+streak instead of a time-based cooldown. Rejected — this conflates two
+different concerns (noise rejection vs. duplicate suppression) and would
+make the noise-rejection threshold uncomfortably coupled to how long
+utterances happen to last, which varies by speaker and phrase.
+
 
 ---
 

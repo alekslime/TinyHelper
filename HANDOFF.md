@@ -117,13 +117,22 @@ unchanged from Milestone 1's `HANDOFF.md`.
   `openwakeword==0.6.0` version pulled fresh from PyPI (not a stale cached
   version, which is what caused this to be missed initially). See
   `docs/DECISIONS.md` for the full writeup.
-- **Real end-to-end microphone verification is still pending** — the fix
-  above was verified via pre-recorded audio and via confirming the full
-  `main.py` startup sequence completes correctly up to (and gracefully
-  past) the point where this sandbox's lack of mic hardware causes
-  `VoiceActivationService.start()` to fail. **Saying "Hey Jarvis" into a
-  real, live microphone on the Windows machine has not yet been confirmed
-  to work post-fix — this is the next thing to verify.**
+- **Real end-to-end microphone verification: DONE.** Confirmed on the
+  actual Windows target machine — model downloaded correctly, mic started,
+  "Hey Jarvis" detected with strong confidence (scores 0.80-0.99), Aura
+  transitioned to LISTENING.
+- **RESOLVED (found via the real-mic test above):** A single spoken
+  utterance was firing the detection callback 3-4 times instead of once
+  (confirmed by the user saying "Hey Jarvis" exactly once and observing 4
+  log lines). Root cause: spoken words stay above the confidence threshold
+  for many more frames than the consecutive-frame confirmation needs,
+  causing repeated re-triggers within one utterance. Fixed by adding a
+  cooldown period (`voice.cooldown_seconds`, default 1.5s) that suppresses
+  further detections for a model right after it fires. Verified directly:
+  same real audio clip produced 3 detections with cooldown disabled, 1
+  with it enabled. **Not yet re-verified on the real Windows mic** — the
+  next session should confirm one "Hey Jarvis" now produces exactly one
+  detection line.
 - `tests/` package is still empty. Flagged again in `docs/TODO.md` — now
   more pressing since `voice/` has real logic worth protecting with
   regression tests before Milestone 3 adds more surface area.

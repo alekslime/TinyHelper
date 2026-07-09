@@ -60,6 +60,11 @@ class VoiceSettings(BaseModel):
         ge=1,
         description="Consecutive frames above threshold needed to confirm detection.",
     )
+    cooldown_seconds: float = Field(
+        default=1.5,
+        ge=0.0,
+        description="Seconds to suppress further detections after one fires, so one utterance = one trigger.",
+    )
     input_device: str | int | None = Field(
         default=None,
         description="Microphone device name/index to use. None = system default.",
