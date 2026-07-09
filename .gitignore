@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+.vscode/
+.idea/
+
+*.log
+logs/
+
+# Local models / caches (never committed — large binaries)
+models/
+*.gguf
+*.onnx
+*.bin
+
+# Iris runtime data (screenshots, memory db) — never committed by design
+data/
+*.db
+*.sqlite3
+
+.env
+.DS_Store
+Thumbs.db
