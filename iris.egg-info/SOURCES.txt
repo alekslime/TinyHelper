@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 app/__init__.py
 app/main_window.py
+app/transcript_bridge.py
 app/wake_word_bridge.py
 aura/__init__.py
 aura/controller.py
@@ -27,6 +28,8 @@ llm/__init__.py
 memory/__init__.py
 overlay/__init__.py
 speech/__init__.py
+speech/listening_session.py
+speech/transcriber.py
 utils/__init__.py
 utils/logger.py
 vision/__init__.py

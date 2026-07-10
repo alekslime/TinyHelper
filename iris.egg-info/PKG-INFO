@@ -38,7 +38,7 @@ it with local models, and guides you visually and by voice.
 
 ## Status
 
-🚧 Early development. Milestone 2 (wake word detection) complete. See
+🚧 Early development. Milestone 3 (speech-to-text) complete. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/TODO.md`](docs/TODO.md) for
 what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full current
 state for anyone (human or AI) picking up development.
@@ -83,8 +83,10 @@ pip install -e ".[speech]"
 python main.py
 ```
 
-Say "Hey Jarvis" — Aura should transition to the LISTENING state (visible
-in the console log for now; real visual feedback lands in Milestone 6).
+Say "Hey Jarvis" — Aura should transition through LISTENING (wake word
+heard) → THINKING (your speech was transcribed and logged) → back to IDLE.
+Check the console log for the recognized text. (No LLM response yet —
+that's Milestone 4.)
 
 Other heavy dependencies (LLM, vision) are declared as optional extras too
 and will be needed as those milestones are built:
