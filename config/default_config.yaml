@@ -51,9 +51,16 @@ llm:
     and to the point unless the user asks for more detail.
 
 vision:
+  enabled: false  # opt-in: off by default, no screenshot is ever taken until this is true
   monitor_index: 0  # 0 = all monitors combined; 1, 2, ... = a single monitor
   save_debug_screenshots: false  # developer aid only -- screenshots are discarded after use by default
   debug_screenshot_dir: null  # null = <app data dir>/data/debug_screenshots
+  repo_id: Xenova/vit-gpt2-image-captioning  # ONNX-exported ViT encoder + GPT-2 decoder captioning model
+  encoder_filename: onnx/encoder_model.onnx
+  decoder_filename: onnx/decoder_model.onnx
+  tokenizer_filename: tokenizer.json
+  local_model_dir: null  # set to bypass the Hub download entirely and load local ONNX/tokenizer files
+  max_new_tokens: 30
 
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

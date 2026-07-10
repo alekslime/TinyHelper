@@ -35,11 +35,12 @@ update it as milestones complete or priorities shift.
 - [x] Model selection appropriate for 8GB VRAM (RTX 3070 Ti)
 - [x] Basic prompt/response loop (text only, no vision yet)
 
-## Milestone 5 — Screen Capture + Vision (planned)
+## Milestone 5 — Screen Capture + Vision ✅ COMPLETE
 
-- [ ] Integrate MSS for screenshot capture
-- [ ] Vision model integration (ONNX Runtime)
-- [ ] Screenshot discarded after use by default (privacy requirement)
+- [x] Integrate MSS for screenshot capture
+- [x] Vision model integration (ONNX Runtime) — image captioning folded into the LLM prompt
+- [x] Screenshot discarded after use by default (privacy requirement) — and the whole
+      feature is opt-in via `vision.enabled` (default `false`), not just non-persistent
 
 ## Milestone 6 — Aura Rendering (planned)
 

@@ -17,8 +17,8 @@ iris/
 │   └── animations/  Animation logic for state transitions, guidance cues (future).
 ├── voice/           Wake word detection (OpenWakeWord) + mic capture. Done.
 ├── speech/          Speech-to-text (Faster-Whisper) + silence detection. Done.
-├── llm/             Local LLM integration (llama.cpp) (future milestone).
-├── vision/           Screen capture + vision model integration (future milestone).
+├── llm/             Local LLM integration (llama.cpp). Done.
+├── vision/           Screen capture + vision model integration. Done, opt-in.
 ├── overlay/         Visual guidance rendering: arrows, highlights, boxes (future).
 ├── memory/          Conversation memory / SQLite persistence (future milestone).
 ├── automation/      Future mouse/keyboard automation. Out of scope for MVP.
@@ -133,7 +133,29 @@ signal-bridge pattern used for wake word detections and transcripts.
 There is no conversation memory yet (Milestone 9) — each call is
 independent, seeded only with a system prompt.
 
-### Data flow (current, as of Milestone 4)
+### Vision module structure (Milestone 5)
+
+`vision/` follows the same single-responsibility, independently-testable-
+layers pattern as `voice/`/`speech/`/`llm/`:
+
+- `vision/capture.py` — `ScreenCapture`: wraps `mss` for a single
+  screenshot. Knows nothing about vision models, the LLM, or Aura. Never
+  writes to disk unless the caller opts into `capture_and_maybe_save()`.
+- `vision/model.py` — `VisionModel`: wraps two ONNX Runtime sessions
+  (a ViT encoder + a GPT-2 decoder) plus a `tokenizers` `Tokenizer`, for
+  single-image captioning (`describe(image) -> str`). Knows nothing about
+  screen capture, transcripts, or Aura — takes an image in, returns a
+  caption out. Weights are downloaded from Hugging Face Hub on first use
+  and cached, same pattern as `llm/engine.py` and `speech/transcriber.py`.
+
+Unlike `llm/engine.py`, screen-context awareness is **also** gated behind
+`settings.vision.enabled` (default `false`) in `main.py`, independent of
+whether the `vision` extra is installed — see `docs/DECISIONS.md`. When
+enabled, `main.py`'s LLM worker thread captures a screenshot, captions it,
+and prepends the caption to the prompt text before calling
+`LLMEngine.generate()` — `llm/engine.py` itself is untouched.
+
+### Data flow (current, as of Milestone 5 part 2)
 
 ```
 Wake word detected (voice/wake_word.py)
@@ -151,6 +173,11 @@ Transcribed on a background thread (speech/transcriber.py)
 Aura → THINKING (via app/transcript_bridge.py)
         │
         ▼
+[If vision.enabled] Screenshot captured + captioned on the same
+background thread (vision/capture.py, vision/model.py), folded into
+the prompt text
+        │
+        ▼
 LLM generates a response on a background thread (llm/engine.py)
         │
         ▼
@@ -158,13 +185,10 @@ Response shown in the placeholder window (via app/llm_bridge.py)
         │
         ▼
 Aura → IDLE
-        │
-        ▼
-[Milestone 5: vision/screen context feeds into the prompt — not yet implemented]
 ```
 
-Once Milestones 5-8 land, this extends to: screen context (Milestone 5's
-vision capture) folded into the LLM prompt → voice response (Milestone 8)
-+ optional visual guidance (Milestone 7) → back to IDLE. Update this
-diagram as each stage is implemented.
+Once Milestones 6-8 land, this extends to: real Aura rendering
+(Milestone 6) → optional visual guidance (Milestone 7) → voice response
+(Milestone 8) → back to IDLE. Update this diagram as each stage is
+implemented.
 

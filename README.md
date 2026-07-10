@@ -9,10 +9,12 @@ it with local models, and guides you visually and by voice.
 
 ## Status
 
-🚧 Early development. Milestone 4 (local LLM integration) complete. See
-[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/TODO.md`](docs/TODO.md) for
-what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full current
-state for anyone (human or AI) picking up development.
+🚧 Early development. Milestone 5 (screen capture + vision) complete in
+code; both it and Milestone 4's LLM generation are still pending
+verification on real hardware with real internet access — see
+[`docs/TODO.md`](docs/TODO.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md)
+for what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full
+current state for anyone (human or AI) picking up development.
 
 ## Core principles
 
@@ -78,8 +80,26 @@ Without the `llm` extra installed, Iris still runs fine — voice/transcript
 handling works as before, and the response window just shows a
 "no LLM configured" placeholder instead of a generated reply.
 
-Other heavy dependencies (vision) are declared as optional extras too
-and will be needed once that milestone is built:
+To also enable screen-context awareness (Iris looks at a screenshot and
+folds a short caption into the prompt): install the `vision` extra, **and**
+turn it on in config — it's opt-in and off by default even with the extra
+installed, since it involves reading your screen (see `docs/DECISIONS.md`):
+
+```bash
+pip install -e ".[speech,llm,vision]"
+```
+
+```yaml
+# In your config.yaml (see config/paths.py for its location):
+vision:
+  enabled: true
+```
+
+The default captioning model (~250MB, ONNX) downloads and caches on first
+use, same as the LLM. Without `vision.enabled: true`, Iris never captures
+the screen at all, regardless of which extras are installed.
+
+Everything, including the Windows-only and dev-tooling extras:
 
 ```bash
 pip install -e ".[speech,llm,vision,windows,dev]"

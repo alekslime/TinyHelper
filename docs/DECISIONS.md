@@ -346,3 +346,69 @@ explicitly choose to keep one" privacy principle in code, not just docs —
 the default path (whatever Milestone 5's vision model integration ends up
 calling) can't accidentally start persisting screenshots without an
 explicit config change.
+
+---
+
+## 2026-07-10 — Screen-context awareness is opt-in (`vision.enabled`, default `false`)
+
+**Decision:** A new `VisionSettings.enabled` flag (default `false`) gates
+the entire screen-context feature in `main.py` — screenshot capture,
+captioning, and folding into the LLM prompt all happen only if it's `true`,
+independent of whether the `vision` extra is installed.
+
+**Why:** Everything else in Iris so far only reacts to explicit voice/debug
+input. Screen capture is qualitatively different — even though each
+capture is triggered per-query and never continuous (see the earlier
+`mss` context-manager entry), it's still reading whatever is on screen,
+which may include far more sensitive content than a spoken question would.
+Defaulting to `false` means installing `pip install -e ".[vision]"` alone
+never causes a screenshot to be taken; a user has to explicitly turn the
+feature on in config. This mirrors `debug.enabled`'s "off until you choose
+it" shape, but for a privacy reason rather than a dev-convenience one.
+
+---
+
+## 2026-07-10 — Image captioning via ONNX Runtime + a non-merged decoder
+
+**Decision:** `vision/model.py`'s `VisionModel` uses
+`Xenova/vit-gpt2-image-captioning`'s ONNX export: a ViT encoder run once
+per screenshot, then a **non-merged** GPT-2 decoder (`decoder_model.onnx`,
+no past-key-value cache) called once per generated token, recomputing over
+the whole sequence-so-far each time.
+
+**Why:** The "merged" decoder export some tools produce accepts a
+`use_cache_branch` flag plus a full set of `past_key_values` tensors on
+every call — meaningfully more complex request-building for real, but
+mostly hollow correctness risk in this codebase's untested-on-real-hardware
+state (see "Known issues"). Captions here are short (`max_new_tokens`
+defaults to 30), so the O(n²) recompute cost of the plain decoder is
+negligible for a single interactive query. Same "small and working over
+clever and fragile" reasoning as Milestone 4's default LLM pick — revisit
+if real-hardware timing shows captioning is a bottleneck.
+
+**Also decided:** id↔text conversion uses the standalone `tokenizers`
+package (`Tokenizer.from_file(tokenizer.json)`) rather than pulling in all
+of `transformers` for one `decode()` call — `transformers` would drag in a
+much larger dependency tree for functionality `tokenizers` already covers
+by itself. Image preprocessing (resize to 224×224, normalize with
+mean/std 0.5) is similarly hand-rolled from the source model's
+`preprocessor_config.json` rather than using `transformers`'s
+`AutoImageProcessor`.
+
+---
+
+## 2026-07-10 — Screen context is folded into the prompt as a bracketed prefix
+
+**Decision:** When screen context is available, `main.py` builds the LLM
+prompt as `"[Current screen shows: {caption}]\n\nUser: {text}"` rather
+than, say, a separate system-prompt field or a structured multi-message
+payload.
+
+**Why:** `LLMEngine.generate()` is deliberately a single-string-in,
+single-string-out interface (see the Milestone 4 entries above) — keeping
+it that way means the vision feature didn't require touching
+`llm/engine.py` at all, just the prompt text assembled in `main.py` before
+calling it. This is a simple starting point, not a final answer — revisit
+once real screenshots/captions are seen on real hardware and it's clear
+whether the LLM actually makes good use of a bracketed caption versus
+needing a more structured format or an explicit system-prompt change.

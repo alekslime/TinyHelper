@@ -162,13 +162,24 @@ class LLMSettings(BaseModel):
 
 
 class VisionSettings(BaseModel):
-    """Screen capture settings (Milestone 5).
+    """Screen capture + vision model settings (Milestone 5).
 
-    Privacy is the default: `vision/capture.py`'s `ScreenCapture` returns
-    an in-memory image and nothing is written to disk unless
-    `save_debug_screenshots` is explicitly turned on for local debugging.
+    Privacy is the default in two ways: `vision/capture.py`'s
+    `ScreenCapture` returns an in-memory image and nothing is written to
+    disk unless `save_debug_screenshots` is explicitly turned on, and the
+    whole feature (capture + captioning + folding into the LLM prompt) is
+    off by default until `enabled` is turned on -- see `docs/DECISIONS.md`.
     """
 
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for screen-context awareness. When false (the "
+            "default), Iris never captures the screen at all -- opt-in, "
+            "not opt-out. When true, a screenshot is captured and captioned "
+            "alongside every voice/debug query and folded into the LLM prompt."
+        ),
+    )
     monitor_index: int = Field(
         default=0,
         ge=0,
@@ -194,6 +205,34 @@ class VisionSettings(BaseModel):
             "save_debug_screenshots is true. None = "
             "<app data dir>/data/debug_screenshots."
         ),
+    )
+    repo_id: str = Field(
+        default="Xenova/vit-gpt2-image-captioning",
+        description="Hugging Face repo to pull ONNX vision-model files from, if local_model_dir is unset.",
+    )
+    encoder_filename: str = Field(
+        default="onnx/encoder_model.onnx",
+        description="Encoder ONNX filename within repo_id.",
+    )
+    decoder_filename: str = Field(
+        default="onnx/decoder_model.onnx",
+        description="Decoder ONNX filename within repo_id.",
+    )
+    tokenizer_filename: str = Field(
+        default="tokenizer.json",
+        description="Fast-tokenizer JSON filename within repo_id.",
+    )
+    local_model_dir: str | None = Field(
+        default=None,
+        description=(
+            "Path to a local directory containing the encoder/decoder/"
+            "tokenizer files. Overrides repo_id-based downloading when set."
+        ),
+    )
+    max_new_tokens: int = Field(
+        default=30,
+        ge=1,
+        description="Maximum tokens to generate per screenshot caption.",
     )
 
 

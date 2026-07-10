@@ -4,19 +4,52 @@ Granular, actionable task tracking. Coarser-grained progress lives in
 `docs/ROADMAP.md`; this file is for the immediate next steps and small
 loose ends.
 
-## Immediate next steps (Milestone 5 — Screen Capture + Vision)
+## Milestone 5 — Screen Capture + Vision — COMPLETE (code), pending real-hardware verification
 
 - [x] Integrate MSS for screenshot capture — `vision/capture.py`'s
       `ScreenCapture`, plus `config.schema.VisionSettings`. Verified for
       real under Xvfb in the dev sandbox (capture, debug-save-to-disk,
       and the out-of-range monitor_index error path all exercised).
-      **Not yet wired into `main.py`** — no consumer exists until the
-      vision model lands, next.
-- [ ] Vision model integration (ONNX Runtime)
-- [ ] Screenshot discarded after use by default (privacy requirement)
-- [ ] Decide how vision context reaches the LLM prompt (e.g. a vision
-      model produces a text description that gets appended to the user's
-      transcript before `LLMEngine.generate()` is called)
+- [x] Vision model integration (ONNX Runtime) — `vision/model.py`'s
+      `VisionModel` (ViT encoder + non-merged GPT-2 decoder via
+      `Xenova/vit-gpt2-image-captioning`'s ONNX export, `tokenizers` for
+      id↔text). Wired into `main.py`: the LLM worker thread captures a
+      screenshot, captions it, and prepends the caption to the prompt
+      before calling `LLMEngine.generate()`.
+- [x] Screenshot discarded after use by default (privacy requirement) —
+      and the whole feature (capture + captioning + prompt-folding) is
+      gated behind `vision.enabled` (default `false`), opt-in on top of
+      the extra being installed. See `docs/DECISIONS.md`.
+- [x] Decided how vision context reaches the LLM prompt — a bracketed
+      prefix (`"[Current screen shows: {caption}]\n\nUser: {text}"`)
+      built in `main.py`, no changes to `llm/engine.py`'s single-string
+      interface. Flagged in `docs/DECISIONS.md` as a starting point to
+      revisit once real captions are seen on real hardware.
+- [ ] **Vision model has NOT been verified end-to-end on real hardware.**
+      This sandbox genuinely cannot reach Hugging Face Hub (confirmed via
+      a real 403/connection failure, not simulated), so `VisionModel`
+      could only be verified for its graceful-failure path — same
+      limitation as Milestone 4's LLM. Also unverified, since they need
+      the actual downloaded ONNX files to check: the encoder/decoder
+      input/output tensor names (`pixel_values`, `input_ids`,
+      `encoder_hidden_states`) assumed in `vision/model.py` match what
+      `Xenova/vit-gpt2-image-captioning`'s ONNX export actually uses, and
+      whether the plain (non-merged) `decoder_model.onnx` file exists at
+      that path in the repo at all — Xenova's exact file layout wasn't
+      directly inspectable from this sandbox either. **Next session on
+      real hardware should:** `pip install -e ".[vision]"`, set
+      `vision.enabled: true` in config, run `main.py`, ask a question
+      with something on screen, and confirm a real caption shows up
+      (check the console at `DEBUG` level for "Screen context added to
+      prompt") rather than a load/inference error. If the assumed
+      tensor/file names are wrong, the fix is local to `vision/model.py`
+      — nothing else depends on those specifics.
+- [ ] Caption quality/relevance is unverified — greedy decoding (no
+      beam search, no sampling) on a small captioning model may produce
+      generic or repetitive descriptions. Revisit once real captions are
+      visible on real hardware; a better/bigger vision model is a
+      config-only swap (`vision.repo_id`/filenames), same shape as
+      Milestone 4's LLM.
 
 ## Loose ends / small items
 
@@ -48,8 +81,11 @@ loose ends.
       speak. Remember to set `debug.enabled: false` (or remove the panel
       entirely) once Milestone 10's real settings UI / end-user experience
       lands — it's explicitly a dev aid, not part of Iris's intended UX.
-- [ ] Add `tests/` content — still empty, now genuinely overdue. `voice/`,
-      `speech/`, and now `llm/` all have real, testable logic that would
+- [ ] Add `tests/` content — was completely empty; now has one file,
+      `tests/test_vision_model.py`, covering only `vision/model.py`'s
+      `preprocess_image()` (the part that doesn't need real model files
+      to test). `voice/`, `speech/`, `llm/`, `vision/capture.py`, and
+      `VisionModel` itself all still have zero test coverage and would
       benefit from a proper pytest suite instead of ad-hoc verification
       scripts used during development.
 - [ ] Add a `LICENSE` file (MIT referenced in `pyproject.toml` but not yet present)
@@ -69,11 +105,12 @@ loose ends.
       microphones, different speaking volumes). Revisit if real usage on
       the Windows machine shows utterances cutting off early or running
       long.
-- [ ] `speech/transcriber.py` and `llm/engine.py` both load their
-      models eagerly at startup, same as the wake word model. On the
-      Quadro M3000M laptop (weaker than the documented RTX 3070 Ti
-      target), this may add real time to startup — worth timing on real
-      hardware and reconsidering lazy-loading if it's noticeably slow.
+- [ ] `speech/transcriber.py`, `llm/engine.py`, and now `vision/model.py`
+      (when `vision.enabled` is true) all load their models eagerly at
+      startup, same as the wake word model. On the Quadro M3000M laptop
+      (weaker than the documented RTX 3070 Ti target), this may add real
+      time to startup — worth timing on real hardware and reconsidering
+      lazy-loading if it's noticeably slow.
 
 ## Known issues
 
