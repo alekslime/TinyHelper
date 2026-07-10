@@ -1,6 +1,7 @@
 """A real, visible `AuraRenderer`: a thin, saturated neon border that hugs
 the screen edges (bias-lighting style), color-coded per `AuraState`, with
-smooth cross-fade transitions.
+smooth cross-fade transitions between states and a slow, continuous
+"breathing" pulse so it doesn't read as flat/static.
 
 Replaces `NullAuraRenderer` as Iris's default renderer (Milestone 6). Built
 as a frameless, click-through, always-on-top top-level widget painted with
@@ -9,25 +10,30 @@ see docs/DECISIONS.md for why this still satisfies the roadmap's "GPU-
 rendered ambient edge glow" goal without a much heavier OpenGL/QML
 dependency.
 
-Visual model: a bright, saturated "core" line right at the edge, plus a
-short-range soft bloom around it -- similar to an RGB bias-light strip --
-rather than a large soft gradient that fades hundreds of pixels inward.
-Layering falloff bands at decreasing width / increasing alpha fakes a
-blur without a real blur filter (cheap, and avoids QGraphicsBlurEffect's
-compositing issues on a translucent top-level widget).
+Visual model: each edge is one continuous multi-stop gradient (not a
+separate "core" rectangle stacked on a separate "bloom" rectangle, which
+produced a visible seam) that feathers in from fully transparent at the
+true screen edge, up to peak brightness a short distance in, then decays
+smoothly back to transparent by `GLOW_DEPTH`. A slow sine-driven
+"breath" scales that peak brightness up and down continuously so the
+border has a sense of life instead of sitting at one flat opacity.
 
 Design constraints from docs/ROADMAP.md, honored here:
     - State-based color transitions (idle/listening/thinking/waiting/error)
-    - Smooth fade in/out, no sharp edges
-    - No pulsing -- colors cross-fade once per state change and then
-      sit still; nothing animates continuously while idle in a state.
+    - Smooth fade in/out, no sharp/harsh edges (12px feather at the seam)
+    - A slow, subtle continuous breathing pulse (not a sharp flashing
+      pulse) -- intentionally revises the earlier "no pulsing" decision
+      after real-hardware feedback that the static version looked flat;
+      see docs/DECISIONS.md.
 """
 
 from __future__ import annotations
 
 import logging
+import math
+import time
 
-from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QLinearGradient, QPainter, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
@@ -36,22 +42,27 @@ from aura.states import DEFAULT_STATE_COLORS, AuraState
 
 logger = logging.getLogger(__name__)
 
-# How far the soft bloom extends inward from each screen edge, in pixels.
-# Kept short and tight -- this is a "neon strip" look, not a room-filling
-# wash, so it should read as a border, not a colored haze over the desktop.
+# How far the glow extends inward from each screen edge, in pixels, before
+# fully fading to transparent.
 GLOW_DEPTH = 70
 
-# Width of the bright, near-solid "core" line sitting right at the edge,
-# inside the bloom band. This is what gives the thin, vivid outline look.
-CORE_WIDTH = 5
+# How far in from the true edge the brightness peaks. Below this, alpha
+# feathers up from 0 (at the edge) to the peak -- this is what removes
+# the hard/flat line-against-nothing look at the screen boundary itself.
+FEATHER_PX = 12
 
-# Alpha (0-255) of the core line itself -- kept high since it's thin and
-# meant to read as a crisp, saturated stroke rather than a fill.
-CORE_ALPHA = 235
+# Peak alpha (0-255) at the brightest point of the gradient (at
+# FEATHER_PX in from the edge), before the breathing multiplier is
+# applied.
+PEAK_ALPHA = 225
 
-# Alpha (0-255) of the bloom right at its brightest (just outside the
-# core), fading to 0 by GLOW_DEPTH in.
-GLOW_EDGE_ALPHA = 165
+# --- Breathing pulse: a slow, continuous sine wave scaling peak alpha up
+# and down so the border reads as alive rather than a flat static line.
+# Subtle by design -- this is meant to feel like breathing, not blinking.
+BREATH_PERIOD_S = 4.2
+BREATH_MIN = 0.72  # multiplier on PEAK_ALPHA at the dimmest point
+BREATH_MAX = 1.0   # multiplier on PEAK_ALPHA at the brightest point
+BREATH_FPS = 30
 
 # How long a state-to-state color cross-fade takes.
 TRANSITION_MS = 350
@@ -85,10 +96,28 @@ class _AuraOverlayWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._color = QColor(66, 133, 244)
+        self._breath = 1.0  # current breathing multiplier, 0..1
+
+        self._breath_timer = QTimer(self)
+        self._breath_timer.setInterval(int(1000 / BREATH_FPS))
+        self._breath_timer.timeout.connect(self._tick_breath)
+        self._breath_start = time.monotonic()
+        self._breath_timer.start()
+
+    def _tick_breath(self) -> None:
+        elapsed = time.monotonic() - self._breath_start
+        phase = (elapsed % BREATH_PERIOD_S) / BREATH_PERIOD_S
+        # 0..1 sine, smooth continuous loop -- no snap at the wraparound.
+        wave = 0.5 - 0.5 * math.cos(2 * math.pi * phase)
+        self._breath = BREATH_MIN + (BREATH_MAX - BREATH_MIN) * wave
+        self.update()
 
     def set_color(self, color: QColor) -> None:
         self._color = color
         self.update()
+
+    def stop(self) -> None:
+        self._breath_timer.stop()
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming convention)
         painter = QPainter(self)
@@ -102,49 +131,46 @@ class _AuraOverlayWidget(QWidget):
 
         w, h = self.width(), self.height()
         depth = GLOW_DEPTH
-        core = CORE_WIDTH
+        peak = int(PEAK_ALPHA * self._breath)
+        feather_stop = FEATHER_PX / depth if depth else 0.0
 
         def edge_color(alpha: int) -> QColor:
             c = QColor(self._color)
-            c.setAlpha(alpha)
+            c.setAlpha(max(0, min(255, alpha)))
             return c
 
-        # --- Soft bloom band: short-range falloff from just outside the
-        # core down to fully transparent by `depth`. This is the "blur"
-        # half of the bias-light look.
-        bloom_bands = [
+        def apply_stops(gradient: QLinearGradient | QRadialGradient) -> None:
+            # One continuous curve per edge: transparent at the true
+            # screen edge, feathering up to peak brightness by
+            # FEATHER_PX in, then decaying smoothly back to transparent
+            # by `depth`. Using several intermediate stops (rather than
+            # a 2-stop linear ramp) rounds the decay so it reads as a
+            # soft glow instead of a harsh straight-line fade.
+            gradient.setColorAt(0.0, edge_color(0))
+            gradient.setColorAt(min(feather_stop, 0.99), edge_color(peak))
+            remaining = 1.0 - feather_stop
+            if remaining > 0:
+                gradient.setColorAt(feather_stop + remaining * 0.35, edge_color(int(peak * 0.55)))
+                gradient.setColorAt(feather_stop + remaining * 0.7, edge_color(int(peak * 0.18)))
+            gradient.setColorAt(1.0, edge_color(0))
+
+        edge_bands = [
             (QRectF(0, 0, w, depth), QLinearGradient(0, 0, 0, depth)),  # top
             (QRectF(0, h - depth, w, depth), QLinearGradient(0, h, 0, h - depth)),  # bottom
             (QRectF(0, 0, depth, h), QLinearGradient(0, 0, depth, 0)),  # left
             (QRectF(w - depth, 0, depth, h), QLinearGradient(w, 0, w - depth, 0)),  # right
         ]
-        for rect, gradient in bloom_bands:
-            gradient.setColorAt(0.0, edge_color(GLOW_EDGE_ALPHA))
-            gradient.setColorAt(1.0, edge_color(0))
+        for rect, gradient in edge_bands:
+            apply_stops(gradient)
             painter.fillRect(rect, gradient)
 
-        # Radial patches at each corner smooth the seam where two bloom
-        # bands would otherwise meet at a visible right angle.
+        # Radial patches at each corner smooth the seam where two edge
+        # bands would otherwise meet at a visible right angle -- same
+        # feathered profile, just radial instead of linear.
         for cx, cy in ((0, 0), (w, 0), (0, h), (w, h)):
             radial = QRadialGradient(cx, cy, depth)
-            radial.setColorAt(0.0, edge_color(GLOW_EDGE_ALPHA))
-            radial.setColorAt(1.0, edge_color(0))
-            painter.setBrush(QBrush(radial))
-            painter.drawRect(QRectF(cx - depth, cy - depth, depth * 2, depth * 2))
-
-        # --- Bright core line: a thin, near-solid, highly saturated stroke
-        # sitting right at the very edge, on top of the bloom. This is what
-        # actually reads as a crisp neon outline rather than just a haze.
-        core_bands = [
-            (QRectF(0, 0, w, core), QLinearGradient(0, 0, 0, core)),  # top
-            (QRectF(0, h - core, w, core), QLinearGradient(0, h, 0, h - core)),  # bottom
-            (QRectF(0, 0, core, h), QLinearGradient(0, 0, core, 0)),  # left
-            (QRectF(w - core, 0, core, h), QLinearGradient(w, 0, w - core, 0)),  # right
-        ]
-        for rect, gradient in core_bands:
-            gradient.setColorAt(0.0, edge_color(CORE_ALPHA))
-            gradient.setColorAt(1.0, edge_color(int(CORE_ALPHA * 0.35)))
-            painter.fillRect(rect, gradient)
+            apply_stops(radial)
+            painter.fillRect(QRectF(cx - depth, cy - depth, depth * 2, depth * 2), QBrush(radial))
 
         painter.end()
 
@@ -219,5 +245,6 @@ class GlowAuraRenderer(AuraRenderer):
         if self._animation is not None:
             self._animation.stop()
         if self._widget is not None:
+            self._widget.stop()
             self._widget.close()
             self._widget = None

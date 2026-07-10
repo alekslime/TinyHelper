@@ -482,3 +482,44 @@ re-check is in `docs/TODO.md`.
 display — may need adjustment once seen for real, particularly since the
 previous round of hand-tuned constants (the 140px version) also needed
 revision after real-hardware feedback.
+
+---
+
+## 2026-07-11 — Merged core+bloom into one gradient with a feather, and added a slow breathing pulse
+
+**Decision:** Two changes to `glow_renderer.py` after real-hardware
+feedback on the thin-core version above: (1) the separate "core"
+rectangle and "bloom" rectangle per edge were merged into a single
+`QLinearGradient`/`QRadialGradient` with several stops, feathering up
+from transparent at the true screen edge over `FEATHER_PX` (12px) to a
+peak, then decaying smoothly to transparent by `GLOW_DEPTH`; (2) a
+`QTimer`-driven sine wave now continuously scales that peak alpha
+between `BREATH_MIN` and `BREATH_MAX` on a `BREATH_PERIOD_S`-second
+cycle, repainting on every tick.
+
+**Why:** the two-rectangle version had a visible seam where the core's
+inner edge stopped and the bloom continued alone — two independently
+authored alpha curves meeting at a boundary rarely lines up smoothly.
+A single gradient with intermediate stops avoids that by construction.
+Separately, the fully static version (color only changes on state
+transition, otherwise pixel-identical every frame) read as flat on a
+real display in a way it hadn't in the offscreen previews — a slow
+breathing pulse is a common technique for ambient UI elements
+specifically to counter that flatness without being distracting.
+
+**Revises:** the original Milestone 6 "no pulsing" constraint (see the
+first glow-renderer entry above) is intentionally superseded here, based
+on direct user feedback after seeing the static version live. The
+distinction that constraint was protecting against — no sharp,
+attention-grabbing flashing — still holds; a 4.2-second smooth sine
+breath is a different thing than the flashing/pulsing it was written to
+avoid.
+
+**Verification:** offscreen only. Rendered the gradient at several fixed
+breath values (0.72, 0.86, 1.0) and a cropped corner close-up to confirm
+the feather removes the seam and the dim/bright range looks reasonable.
+The timer loop itself (real elapsed-time-driven animation) was checked
+by evaluating the sine formula at several time offsets, not by watching
+it animate live (no real display in this sandbox). **Real-hardware
+check still needed** — breathing speed/amplitude may want retuning once
+seen for real.

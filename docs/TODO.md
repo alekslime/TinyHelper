@@ -65,7 +65,23 @@ loose ends.
 - [x] Smooth fade, no sharp edges, no pulsing — confirmed by the pixel
       sampling above (smooth gradient falloff) and by inspection of the
       animation code (single cross-fade per transition, nothing loops).
-- [x] **Restyled to a thin neon border (2026-07-11).** After seeing it on
+- [x] **Feathered + breathing update (2026-07-11, later same day).** After
+      seeing the thin-core version on real hardware, feedback was that it
+      looked flat and had a harsh seam where the core line met the bloom.
+      Replaced the separate core-rectangle + bloom-rectangle pair with a
+      single continuous multi-stop gradient per edge (feathers up from 0
+      at the true screen edge over `FEATHER_PX` = 12px, peaks, then
+      decays smoothly to 0 by `GLOW_DEPTH`) — removes the seam entirely.
+      Also added a slow, continuous "breathing" pulse: a `QTimer`-driven
+      sine wave (`BREATH_PERIOD_S` = 4.2s, oscillating peak alpha between
+      `BREATH_MIN`/`BREATH_MAX` = 0.72–1.0) so the border has a sense of
+      life instead of sitting at one flat brightness. This intentionally
+      revises the original "no pulsing" constraint from Milestone 6 —
+      see `docs/DECISIONS.md`. Verified offscreen: rendered the gradient
+      at multiple breath phases and a close-up corner crop to confirm no
+      visible seam and a believable dim→bright range. **Still needs a
+      real-hardware look** — breathing speed/amplitude and the feather
+      width were picked by eye, not tuned against a real display.
       real hardware, the original wide (140px) soft-gradient wash read as
       a hazy tint rather than a visible border, especially over bright
       screen content. Replaced with a bias-light-strip look: a thin,
