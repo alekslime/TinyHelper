@@ -446,3 +446,39 @@ calling it. This is a simple starting point, not a final answer — revisit
 once real screenshots/captions are seen on real hardware and it's clear
 whether the LLM actually makes good use of a bracketed caption versus
 needing a more structured format or an explicit system-prompt change.
+
+---
+
+## 2026-07-11 — Restyled the glow from a wide soft wash to a thin neon border
+
+**Decision:** After the user ran Milestone 6 on real hardware, the 140px-
+deep soft gradient (from the previous decision above) read as a faint
+blue haze rather than a visible border, and didn't match the punchy,
+uniform neon-strip look the user wanted (reference: a saturated
+cyan/teal bias-light border of consistent thickness on all four edges).
+Restyled `glow_renderer.py` to layer two elements instead of one wide
+gradient: a thin, near-solid, saturation-boosted "core" line (5px,
+alpha 235) right at the edge, plus a much shorter bloom band (70px, down
+from 140px) for soft falloff around it. Added a `_vivid()` helper that
+pushes every state color to near-max HSV saturation/value before
+painting, so the border reads as neon rather than the flatter tones used
+elsewhere in the app.
+
+**Why not just make the existing gradient more opaque:** a wider, more
+opaque wash would still look like a tinted haze covering a large
+fraction of the screen, not a border. The user's reference image was
+specifically a thin outline with heavy blur concentrated close to the
+edge — that's a different shape (core + short bloom), not just a
+stronger version of the same wide gradient.
+
+**Verification:** re-rendered each `AuraState` offscreen and visually
+confirmed (via saved PNGs) the border now appears as a thin, saturated
+line consistent on all four edges, with a much tighter falloff than
+before. **Not yet confirmed over real desktop content** — real-hardware
+re-check is in `docs/TODO.md`.
+
+**Known follow-up:** `CORE_WIDTH`, `CORE_ALPHA`, `GLOW_DEPTH`, and
+`GLOW_EDGE_ALPHA` are still eyeballed constants, not tuned against a real
+display — may need adjustment once seen for real, particularly since the
+previous round of hand-tuned constants (the 140px version) also needed
+revision after real-hardware feedback.

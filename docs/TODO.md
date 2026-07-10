@@ -65,16 +65,27 @@ loose ends.
 - [x] Smooth fade, no sharp edges, no pulsing — confirmed by the pixel
       sampling above (smooth gradient falloff) and by inspection of the
       animation code (single cross-fade per transition, nothing loops).
-- [ ] **Never shown on a real display.** This sandbox has no real GPU/
-      compositor — offscreen Qt (`QT_QPA_PLATFORM=offscreen`) proves the
-      paint logic and color math are correct, but click-through
-      behavior, always-on-top stacking, and how it visually looks
-      layered over real desktop content are all unverified. Next session
-      on real hardware should: run `main.py`, confirm the glow appears
-      around the screen edges, try clicking/typing in another window
-      underneath it (should work normally — the overlay must not steal
-      input), and trigger a few state changes (e.g. via the debug text
-      input) to see the cross-fade live.
+- [x] **Restyled to a thin neon border (2026-07-11).** After seeing it on
+      real hardware, the original wide (140px) soft-gradient wash read as
+      a hazy tint rather than a visible border, especially over bright
+      screen content. Replaced with a bias-light-strip look: a thin,
+      near-solid, saturation-boosted "core" line (`CORE_WIDTH` = 5px,
+      `CORE_ALPHA` = 235) right at the screen edge, plus a much shorter
+      bloom band (`GLOW_DEPTH` dropped from 140px to 70px) for soft
+      falloff instead of a room-filling haze. Added `_vivid()` to push
+      every state color to near-max saturation/value so the strip reads
+      as punchy neon rather than the flatter tones used elsewhere in the
+      app's palette. Re-verified offscreen (pixel-sampled each state) but
+      **not yet re-confirmed over real desktop content** — that's the
+      next real-hardware check.
+- [ ] **Never shown on a real display with the new style.** The original
+      wide-gradient version was confirmed working on real hardware
+      (glow visible, though thin/washed-out per feedback); the new
+      thin-core-line version above has only been verified offscreen in
+      this sandbox. Next session on real hardware should: run
+      `main.py`, confirm the border reads as a crisp, saturated line
+      hugging all four edges (not just top), and trigger a few state
+      changes to see the cross-fade live.
 - [ ] **Single-monitor only.** `GlowAuraRenderer.initialize()` sizes the
       overlay to `QGuiApplication.primaryScreen()`'s geometry, not the
       combined virtual geometry of all monitors — on a multi-monitor
@@ -82,10 +93,11 @@ loose ends.
       fixing once real multi-monitor hardware is available to test
       against — `vision/capture.py`'s `ScreenCapture.list_monitors()`
       may be useful groundwork here.
-- [ ] `GLOW_DEPTH`, `GLOW_EDGE_ALPHA`, and `TRANSITION_MS` in
-      `glow_renderer.py` were picked by eye/reasoning, not tuned against
-      a real display — may look too subtle or too strong on actual
-      hardware and are worth revisiting once seen for real.
+- [ ] `GLOW_DEPTH`, `CORE_WIDTH`, `CORE_ALPHA`, `GLOW_EDGE_ALPHA`, and
+      `TRANSITION_MS` in `glow_renderer.py` were picked by eye/reasoning,
+      not tuned against a real display — may still need adjustment once
+      seen for real (e.g. core width/alpha may want to differ by state,
+      or by how bright the underlying desktop content is).
 
 ## Loose ends / small items
 

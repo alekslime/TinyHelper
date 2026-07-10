@@ -1,5 +1,6 @@
-"""A real, visible `AuraRenderer`: a soft ambient glow around the screen
-edges, color-coded per `AuraState`, with smooth cross-fade transitions.
+"""A real, visible `AuraRenderer`: a thin, saturated neon border that hugs
+the screen edges (bias-lighting style), color-coded per `AuraState`, with
+smooth cross-fade transitions.
 
 Replaces `NullAuraRenderer` as Iris's default renderer (Milestone 6). Built
 as a frameless, click-through, always-on-top top-level widget painted with
@@ -8,10 +9,17 @@ see docs/DECISIONS.md for why this still satisfies the roadmap's "GPU-
 rendered ambient edge glow" goal without a much heavier OpenGL/QML
 dependency.
 
+Visual model: a bright, saturated "core" line right at the edge, plus a
+short-range soft bloom around it -- similar to an RGB bias-light strip --
+rather than a large soft gradient that fades hundreds of pixels inward.
+Layering falloff bands at decreasing width / increasing alpha fakes a
+blur without a real blur filter (cheap, and avoids QGraphicsBlurEffect's
+compositing issues on a translucent top-level widget).
+
 Design constraints from docs/ROADMAP.md, honored here:
     - State-based color transitions (idle/listening/thinking/waiting/error)
     - Smooth fade in/out, no sharp edges
-    - No neon/pulsing -- colors cross-fade once per state change and then
+    - No pulsing -- colors cross-fade once per state change and then
       sit still; nothing animates continuously while idle in a state.
 """
 
@@ -28,14 +36,36 @@ from aura.states import DEFAULT_STATE_COLORS, AuraState
 
 logger = logging.getLogger(__name__)
 
-# How far the glow extends inward from each screen edge, in pixels.
-GLOW_DEPTH = 140
+# How far the soft bloom extends inward from each screen edge, in pixels.
+# Kept short and tight -- this is a "neon strip" look, not a room-filling
+# wash, so it should read as a border, not a colored haze over the desktop.
+GLOW_DEPTH = 70
 
-# Alpha (0-255) of the glow right at the screen edge; fades to 0 by GLOW_DEPTH in.
-GLOW_EDGE_ALPHA = 110
+# Width of the bright, near-solid "core" line sitting right at the edge,
+# inside the bloom band. This is what gives the thin, vivid outline look.
+CORE_WIDTH = 5
+
+# Alpha (0-255) of the core line itself -- kept high since it's thin and
+# meant to read as a crisp, saturated stroke rather than a fill.
+CORE_ALPHA = 235
+
+# Alpha (0-255) of the bloom right at its brightest (just outside the
+# core), fading to 0 by GLOW_DEPTH in.
+GLOW_EDGE_ALPHA = 165
 
 # How long a state-to-state color cross-fade takes.
 TRANSITION_MS = 350
+
+
+def _vivid(color: QColor) -> QColor:
+    """Boost a state color to near-full saturation/brightness so it reads
+    as a punchy neon tone rather than the softer flat colors used
+    elsewhere in the app's palette (e.g. buttons, text).
+    """
+    h, s, v, a = color.getHsv()
+    vivid = QColor()
+    vivid.setHsv(h, max(s, 235), max(v, 245), a)
+    return vivid
 
 
 class _AuraOverlayWidget(QWidget):
@@ -65,31 +95,35 @@ class _AuraOverlayWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         # Additive blending: overlapping edge/corner gradients brighten
         # together instead of one overwriting another, which is what makes
-        # the corners look like one continuous glow rather than four
+        # the corners look like one continuous strip rather than four
         # separate rectangles with visible seams.
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
         painter.setPen(Qt.PenStyle.NoPen)
 
         w, h = self.width(), self.height()
         depth = GLOW_DEPTH
+        core = CORE_WIDTH
 
         def edge_color(alpha: int) -> QColor:
             c = QColor(self._color)
             c.setAlpha(alpha)
             return c
 
-        edge_bands = [
+        # --- Soft bloom band: short-range falloff from just outside the
+        # core down to fully transparent by `depth`. This is the "blur"
+        # half of the bias-light look.
+        bloom_bands = [
             (QRectF(0, 0, w, depth), QLinearGradient(0, 0, 0, depth)),  # top
             (QRectF(0, h - depth, w, depth), QLinearGradient(0, h, 0, h - depth)),  # bottom
             (QRectF(0, 0, depth, h), QLinearGradient(0, 0, depth, 0)),  # left
             (QRectF(w - depth, 0, depth, h), QLinearGradient(w, 0, w - depth, 0)),  # right
         ]
-        for rect, gradient in edge_bands:
+        for rect, gradient in bloom_bands:
             gradient.setColorAt(0.0, edge_color(GLOW_EDGE_ALPHA))
             gradient.setColorAt(1.0, edge_color(0))
             painter.fillRect(rect, gradient)
 
-        # Radial patches at each corner smooth the seam where two edge
+        # Radial patches at each corner smooth the seam where two bloom
         # bands would otherwise meet at a visible right angle.
         for cx, cy in ((0, 0), (w, 0), (0, h), (w, h)):
             radial = QRadialGradient(cx, cy, depth)
@@ -97,6 +131,20 @@ class _AuraOverlayWidget(QWidget):
             radial.setColorAt(1.0, edge_color(0))
             painter.setBrush(QBrush(radial))
             painter.drawRect(QRectF(cx - depth, cy - depth, depth * 2, depth * 2))
+
+        # --- Bright core line: a thin, near-solid, highly saturated stroke
+        # sitting right at the very edge, on top of the bloom. This is what
+        # actually reads as a crisp neon outline rather than just a haze.
+        core_bands = [
+            (QRectF(0, 0, w, core), QLinearGradient(0, 0, 0, core)),  # top
+            (QRectF(0, h - core, w, core), QLinearGradient(0, h, 0, h - core)),  # bottom
+            (QRectF(0, 0, core, h), QLinearGradient(0, 0, core, 0)),  # left
+            (QRectF(w - core, 0, core, h), QLinearGradient(w, 0, w - core, 0)),  # right
+        ]
+        for rect, gradient in core_bands:
+            gradient.setColorAt(0.0, edge_color(CORE_ALPHA))
+            gradient.setColorAt(1.0, edge_color(int(CORE_ALPHA * 0.35)))
+            painter.fillRect(rect, gradient)
 
         painter.end()
 
@@ -111,7 +159,7 @@ class GlowAuraRenderer(AuraRenderer):
     def __init__(self) -> None:
         self._widget: _AuraOverlayWidget | None = None
         self._animation: QVariantAnimation | None = None
-        self._current_color: QColor = QColor(*DEFAULT_STATE_COLORS[AuraState.IDLE])
+        self._current_color: QColor = _vivid(QColor(*DEFAULT_STATE_COLORS[AuraState.IDLE]))
 
     def initialize(self) -> None:
         self._widget = _AuraOverlayWidget()
@@ -143,7 +191,7 @@ class GlowAuraRenderer(AuraRenderer):
 
     def set_state(self, state: AuraState) -> None:
         target_rgb = DEFAULT_STATE_COLORS.get(state, DEFAULT_STATE_COLORS[AuraState.IDLE])
-        target_color = QColor(*target_rgb)
+        target_color = _vivid(QColor(*target_rgb))
 
         if self._animation is None:
             # set_state called before initialize() — shouldn't happen via
