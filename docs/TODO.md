@@ -51,6 +51,42 @@ loose ends.
       config-only swap (`vision.repo_id`/filenames), same shape as
       Milestone 4's LLM.
 
+## Milestone 6 — Aura Rendering — COMPLETE (code + offscreen visual verification), pending real-display check
+
+- [x] Real ambient edge glow — `aura/renderer/glow_renderer.py`'s
+      `GlowAuraRenderer`. Verified for real in this sandbox: rendered
+      each `AuraState` offscreen to a PNG and confirmed via pixel
+      sampling that glow intensity peaks at corners/edges and fades to
+      fully transparent by screen center, with no visible seam between
+      edge bands.
+- [x] State-based color transitions — a 350ms `QVariantAnimation`
+      cross-fade per `set_state()` call, verified the animation reaches
+      the correct target color.
+- [x] Smooth fade, no sharp edges, no pulsing — confirmed by the pixel
+      sampling above (smooth gradient falloff) and by inspection of the
+      animation code (single cross-fade per transition, nothing loops).
+- [ ] **Never shown on a real display.** This sandbox has no real GPU/
+      compositor — offscreen Qt (`QT_QPA_PLATFORM=offscreen`) proves the
+      paint logic and color math are correct, but click-through
+      behavior, always-on-top stacking, and how it visually looks
+      layered over real desktop content are all unverified. Next session
+      on real hardware should: run `main.py`, confirm the glow appears
+      around the screen edges, try clicking/typing in another window
+      underneath it (should work normally — the overlay must not steal
+      input), and trigger a few state changes (e.g. via the debug text
+      input) to see the cross-fade live.
+- [ ] **Single-monitor only.** `GlowAuraRenderer.initialize()` sizes the
+      overlay to `QGuiApplication.primaryScreen()`'s geometry, not the
+      combined virtual geometry of all monitors — on a multi-monitor
+      setup the glow will only appear around the primary display. Worth
+      fixing once real multi-monitor hardware is available to test
+      against — `vision/capture.py`'s `ScreenCapture.list_monitors()`
+      may be useful groundwork here.
+- [ ] `GLOW_DEPTH`, `GLOW_EDGE_ALPHA`, and `TRANSITION_MS` in
+      `glow_renderer.py` were picked by eye/reasoning, not tuned against
+      a real display — may look too subtle or too strong on actual
+      hardware and are worth revisiting once seen for real.
+
 ## Loose ends / small items
 
 - [ ] **Real LLM generation has NOT been verified end-to-end on real
@@ -91,13 +127,9 @@ loose ends.
 - [ ] Add a `LICENSE` file (MIT referenced in `pyproject.toml` but not yet present)
 - [ ] Consider a `Makefile` or `justfile` for common dev commands
       (`run`, `test`, `lint`, `format`) once there's enough to script
-- [ ] `NullAuraRenderer` still has no visual feedback — Aura state changes
-      are only visible in logs. Getting more noticeable now that a full
-      conversation turn (wake word → listen → transcribe → THINKING →
-      generate → IDLE) happens with zero visual feedback beyond the
-      placeholder window's response text. Worth reconsidering the
-      priority of a minimal visual stopgap vs. waiting for the full
-      Milestone 6 GPU-rendered glow.
+- [ ] `GlowAuraRenderer` has no visual guidance rendering yet (arrows,
+      highlights, bounding boxes) — that's Milestone 7. It only shows
+      the ambient state glow so far.
 - [ ] The silence-detection thresholds in `speech/listening_session.py`
       (`silence_rms_threshold`, timeouts) were tuned against one clean
       recorded sample and reasoned about mathematically, not tested across

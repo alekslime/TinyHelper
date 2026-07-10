@@ -28,6 +28,7 @@ from app.main_window import MainWindow
 from app.transcript_bridge import TranscriptBridge
 from app.wake_word_bridge import WakeWordBridge
 from aura.controller import AuraController
+from aura.renderer.glow_renderer import GlowAuraRenderer
 from aura.renderer.null_renderer import NullAuraRenderer
 from aura.states import AuraState
 from config.settings import get_settings
@@ -87,8 +88,19 @@ def main() -> int:
     app.setApplicationName(settings.app_name)
     app.setApplicationVersion(settings.version)
 
-    aura = AuraController(renderer=NullAuraRenderer())
-    aura.start()
+    # Real Aura rendering (Milestone 6): a soft ambient screen-edge glow,
+    # replacing the placeholder NullAuraRenderer. Falls back to
+    # NullAuraRenderer on any construction/initialize failure -- same
+    # graceful-degradation shape as the LLM/vision pipelines above, since a
+    # missing visual is far less important than Iris staying usable at all.
+    try:
+        renderer = GlowAuraRenderer()
+        aura = AuraController(renderer=renderer)
+        aura.start()
+    except Exception:
+        logger.exception("Could not start the Aura glow renderer — falling back to no visuals.")
+        aura = AuraController(renderer=NullAuraRenderer())
+        aura.start()
 
     # Bridges: audio/worker threads -> Qt main thread. See
     # app/wake_word_bridge.py, app/transcript_bridge.py, and

@@ -42,11 +42,16 @@ update it as milestones complete or priorities shift.
 - [x] Screenshot discarded after use by default (privacy requirement) — and the whole
       feature is opt-in via `vision.enabled` (default `false`), not just non-persistent
 
-## Milestone 6 — Aura Rendering (planned)
+## Milestone 6 — Aura Rendering ✅ COMPLETE
 
-- [ ] Real GPU-rendered ambient edge glow (replaces `NullAuraRenderer`)
-- [ ] State-based color transitions (idle/listening/thinking/waiting/error)
-- [ ] Smooth fade in/out, no sharp edges, no neon/pulsing
+- [x] Real rendered ambient edge glow (`aura/renderer/glow_renderer.py`'s
+      `GlowAuraRenderer`), replacing `NullAuraRenderer` as the default
+      — built with QPainter gradients rather than a literal custom GPU
+      shader; see docs/DECISIONS.md for why that still meets this
+      milestone's intent.
+- [x] State-based color transitions (idle/listening/thinking/waiting/error)
+- [x] Smooth fade in/out, no sharp edges, no neon/pulsing — colors
+      cross-fade once per state change (350ms) and then sit still
 
 ## Milestone 7 — Visual Guidance (planned)
 

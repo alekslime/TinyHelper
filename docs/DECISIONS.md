@@ -397,6 +397,40 @@ mean/std 0.5) is similarly hand-rolled from the source model's
 
 ---
 
+## 2026-07-10 — Aura's real glow is QPainter gradients, not a custom GPU shader
+
+**Decision:** `aura/renderer/glow_renderer.py`'s `GlowAuraRenderer` paints
+the ambient edge glow with `QPainter`/`QLinearGradient`/`QRadialGradient`
+on a plain (software-backed) `QWidget`, not a `QOpenGLWidget` with hand-
+written shader code, even though `docs/ROADMAP.md` originally described
+this milestone as "GPU-rendered."
+
+**Why:** Qt's raster/GPU backend already accelerates `QPainter` drawing
+under the hood on real hardware, and a soft multi-stop gradient glow is
+well within what it handles smoothly — a custom shader pipeline would add
+real complexity (a `QOpenGLWidget`, GLSL source, buffer/uniform
+management) for a visual result a gradient-based approach already
+achieves. Verified for real in this sandbox (offscreen Qt): rendered each
+`AuraState`'s glow to a PNG and confirmed via pixel sampling that color
+intensity peaks at the corners/edges and fades to fully transparent by
+the screen center, with no visible seam between adjacent edge bands
+(`QPainter.CompositionMode_Plus` blends the overlapping edge/corner
+gradients additively). Revisit only if real-hardware testing shows a
+performance problem a pure `QPainter` approach can't solve.
+
+**Also decided:** the overlay window is frameless, always-on-top, and
+click-through (`Qt.WA_TransparentForMouseEvents`) so it never intercepts
+input meant for whatever the user is actually working in — consistent
+with Iris being a background copilot, not a foreground app that steals
+focus.
+
+**Known limitation:** the overlay only covers the *primary* screen's
+geometry, not the combined virtual geometry of all monitors — real
+multi-monitor spanning is a follow-up, not yet implemented. See
+`docs/TODO.md`.
+
+---
+
 ## 2026-07-10 — Screen context is folded into the prompt as a bracketed prefix
 
 **Decision:** When screen context is available, `main.py` builds the LLM

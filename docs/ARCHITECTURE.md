@@ -11,7 +11,7 @@ iris/
 │
 ├── app/            Application shell: entry-point wiring, main window(s).
 ├── aura/            Visual overlay system (independent from AI logic).
-│   ├── renderer/    Renderer interface + implementations (currently a no-op).
+│   ├── renderer/    Renderer interface + implementations. Real glow renderer done (Milestone 6).
 │   ├── shaders/     GPU shader code for the ambient glow (future milestone).
 │   ├── themes/      Theme definitions (colors, glow intensity, etc.) (future).
 │   └── animations/  Animation logic for state transitions, guidance cues (future).
@@ -155,7 +155,23 @@ enabled, `main.py`'s LLM worker thread captures a screenshot, captions it,
 and prepends the caption to the prompt text before calling
 `LLMEngine.generate()` — `llm/engine.py` itself is untouched.
 
-### Data flow (current, as of Milestone 5 part 2)
+### Aura rendering (Milestone 6)
+
+`aura/renderer/glow_renderer.py`'s `GlowAuraRenderer` is the real
+`AuraRenderer` implementation, replacing `NullAuraRenderer` as `main.py`'s
+default. It owns a frameless, translucent, always-on-top, click-through
+`QWidget` (`_AuraOverlayWidget`) sized to the primary screen, and paints a
+soft ambient glow inward from each edge using `QPainter` gradients —
+brightest at the screen edges/corners, fading to fully transparent by
+`GLOW_DEPTH` pixels in. `set_state()` doesn't repaint with a hard color
+swap; it drives a `QVariantAnimation` that cross-fades the current color
+to the new state's color over 350ms, then holds still — no continuous
+pulsing, per `docs/ROADMAP.md`'s design constraints. `main.py` falls back
+to `NullAuraRenderer` if constructing/initializing the glow renderer fails
+for any reason, same graceful-degradation shape as the LLM/vision
+pipelines.
+
+### Data flow (current, as of Milestone 6)
 
 ```
 Wake word detected (voice/wake_word.py)
@@ -187,8 +203,8 @@ Response shown in the placeholder window (via app/llm_bridge.py)
 Aura → IDLE
 ```
 
-Once Milestones 6-8 land, this extends to: real Aura rendering
-(Milestone 6) → optional visual guidance (Milestone 7) → voice response
-(Milestone 8) → back to IDLE. Update this diagram as each stage is
-implemented.
+Once Milestones 7-8 land, this extends to: optional visual guidance
+(Milestone 7, arrows/highlights drawn by the same overlay widget) → voice
+response (Milestone 8) → back to IDLE. Update this diagram as each stage
+is implemented.
 
