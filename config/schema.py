@@ -71,6 +71,52 @@ class VoiceSettings(BaseModel):
     )
 
 
+class SpeechSettings(BaseModel):
+    """Speech-to-text (Faster-Whisper) and utterance-capture settings.
+
+    Faster-Whisper downloads model weights from Hugging Face Hub on first
+    use per `model_size`, then caches them locally — see
+    `speech/transcriber.py` and `docs/DECISIONS.md`.
+    """
+
+    model_size: str = Field(
+        default="small",
+        description="Faster-Whisper model size (e.g. tiny, base, small, medium, large-v3).",
+    )
+    device: str = Field(
+        default="auto",
+        description="Inference device: 'auto', 'cpu', or 'cuda'.",
+    )
+    compute_type: str = Field(
+        default="default",
+        description="Faster-Whisper compute type (e.g. 'default', 'int8', 'float16').",
+    )
+    language: str | None = Field(
+        default="en",
+        description="Force a language code, or None to auto-detect per utterance.",
+    )
+    silence_rms_threshold: float = Field(
+        default=300.0,
+        ge=0.0,
+        description="RMS energy below which a frame is considered silence.",
+    )
+    end_silence_seconds: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Seconds of silence after speech that ends an utterance.",
+    )
+    initial_timeout_seconds: float = Field(
+        default=3.0,
+        ge=0.0,
+        description="Seconds to wait for speech to start before giving up (e.g. accidental wake word).",
+    )
+    max_duration_seconds: float = Field(
+        default=10.0,
+        ge=0.0,
+        description="Absolute cap on utterance length, regardless of silence detection.",
+    )
+
+
 class AppSettings(BaseModel):
     """Top-level application settings.
 
@@ -85,3 +131,4 @@ class AppSettings(BaseModel):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     aura: AuraSettings = Field(default_factory=AuraSettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
+    speech: SpeechSettings = Field(default_factory=SpeechSettings)

@@ -160,6 +160,57 @@ different concerns (noise rejection vs. duplicate suppression) and would
 make the noise-rejection threshold uncomfortably coupled to how long
 utterances happen to last, which varies by speaker and phrase.
 
+---
+
+## 2026-07-09 — Speech-to-text failure must not disable wake word detection
+
+**Decision:** `VoiceActivationService` catches any exception from loading
+the Faster-Whisper model and continues with `self._transcriber = None`
+rather than letting construction fail. Wake word detection has zero
+dependency on transcription working — an utterance just gets discarded
+(logged as a warning) if the transcriber isn't available.
+
+**Why:** These are two independently-failing external dependencies (a
+downloaded wake word model vs. downloaded Whisper weights), and a failure
+in one has no logical reason to take down the other. Coupling them would
+have been a regression from Milestone 2, where wake word detection already
+had its own independent graceful-degradation path.
+
+---
+
+## 2026-07-09 — Mode-based frame routing, one microphone stream
+
+**Decision:** `VoiceActivationService` owns a single `MicrophoneStream` and
+routes each incoming frame to either the wake word detector or the active
+`ListeningSession`, based on internal state — never both, and never two
+separate audio streams.
+
+**Why:** Opening two simultaneous `InputStream`s to the same audio device
+is wasteful and can cause device-contention issues on some platforms/drivers.
+Since wake word listening and utterance capture are mutually exclusive in
+time (you're never doing both at once), a single stream with mode-based
+routing is simpler and more robust than coordinating two streams.
+
+---
+
+## 2026-07-09 — Transcription runs on a dedicated worker thread, not the audio thread
+
+**Decision:** Once a `ListeningSession` finishes, `VoiceActivationService`
+immediately clears it (so the audio callback goes back to routing frames
+to the wake word detector without gap) and hands the captured audio to a
+new `threading.Thread` for transcription, rather than calling
+`Transcriber.transcribe()` directly from the audio callback.
+
+**Why:** `sounddevice`'s audio callback must return quickly — a Faster-Whisper
+transcription call can take anywhere from under a second to several
+seconds depending on hardware and model size (particularly relevant given
+this project's range of target/dev hardware, from an RTX 3070 Ti down to a
+Quadro M3000M laptop). Blocking the audio callback for that long would
+drop incoming audio, potentially missing the very next wake word.
+Transcription results are delivered back to the Qt main thread via
+`app/transcript_bridge.py`, following the same pattern established for
+wake word detections in `docs/DECISIONS.md`'s earlier entry on threading.
+
 
 ---
 

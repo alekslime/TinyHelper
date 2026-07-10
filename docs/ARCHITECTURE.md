@@ -16,7 +16,7 @@ iris/
 │   ├── themes/      Theme definitions (colors, glow intensity, etc.) (future).
 │   └── animations/  Animation logic for state transitions, guidance cues (future).
 ├── voice/           Wake word detection (OpenWakeWord) + mic capture. Done.
-├── speech/          Speech-to-text (Faster-Whisper) (future milestone).
+├── speech/          Speech-to-text (Faster-Whisper) + silence detection. Done.
 ├── llm/             Local LLM integration (llama.cpp) (future milestone).
 ├── vision/           Screen capture + vision model integration (future milestone).
 ├── overlay/         Visual guidance rendering: arrows, highlights, boxes (future).
@@ -98,32 +98,51 @@ thread, which is the standard, safe way to get data from a worker thread
 to the GUI thread. See `docs/DECISIONS.md` for why this matters even though
 `NullAuraRenderer` doesn't touch Qt/GPU resources yet.
 
-## Data flow (target, once all milestones land)
+### Speech module structure (Milestone 3)
+
+`speech/` mirrors `voice/`'s independently-testable-layers pattern:
+
+- `speech/listening_session.py` — `ListeningSession`: buffers audio frames
+  for one utterance, uses RMS-based silence detection to know when the
+  user stopped talking. Knows nothing about transcription or wake words.
+- `speech/transcriber.py` — `Transcriber`: wraps Faster-Whisper. Takes
+  buffered audio, returns text. Knows nothing about microphones or timing.
+
+`voice/service.py`'s `VoiceActivationService` now orchestrates the full
+pipeline: it owns the single `MicrophoneStream` and routes each frame to
+either the wake word detector (normal listening) or the active
+`ListeningSession` (capturing an utterance), based on internal mode state.
+When a session finishes, the captured audio is handed to a background
+thread for transcription — never the audio callback thread — and the
+result reaches Qt's main thread via `app/transcript_bridge.py`, the same
+signal-bridge pattern as wake word detections.
+
+### Data flow (current, as of Milestone 3)
 
 ```
-Wake word detected (voice/)
+Wake word detected (voice/wake_word.py)
         │
         ▼
-Aura → LISTENING (aura/controller)
+Aura → LISTENING (via app/wake_word_bridge.py)
         │
         ▼
-Speech captured & transcribed (speech/)
+Audio buffered until silence (speech/listening_session.py)
         │
         ▼
-Aura → THINKING
+Transcribed on a background thread (speech/transcriber.py)
         │
         ▼
-Screenshot captured (vision/) ── discarded after use unless user saves it
+Aura → THINKING (via app/transcript_bridge.py)
         │
         ▼
-Local LLM reasons over transcript + screen context (llm/)
-        │
-        ▼
-Response: voice output + optional visual guidance (overlay/)
+[Milestone 4: LLM reasons over the transcript — not yet implemented]
         │
         ▼
 Aura → IDLE
 ```
 
-This flow is aspirational — it documents the target architecture, not
-current functionality. Update this diagram as each stage is implemented.
+Once Milestones 4-8 land, this extends to: LLM reasoning over the
+transcript (+ screen context from Milestone 5's vision capture) →
+voice response (Milestone 8) + optional visual guidance (Milestone 7) →
+back to IDLE. Update this diagram as each stage is implemented.
+

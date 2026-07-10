@@ -23,11 +23,11 @@ update it as milestones complete or priorities shift.
 - [x] Wake word triggers Aura → LISTENING state transition
 - [x] Configurable wake word / sensitivity in settings
 
-## Milestone 3 — Speech-to-Text (planned)
+## Milestone 3 — Speech-to-Text ✅ COMPLETE
 
-- [ ] Integrate Faster-Whisper
-- [ ] Capture audio after wake word, transcribe locally
-- [ ] Handle silence detection / end-of-utterance
+- [x] Integrate Faster-Whisper for local transcription
+- [x] Capture audio after wake word, transcribe locally
+- [x] Handle silence detection / end-of-utterance
 
 ## Milestone 4 — Local LLM Integration (planned)
 

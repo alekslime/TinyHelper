@@ -27,3 +27,13 @@ voice:
   consecutive_frames_required: 2
   cooldown_seconds: 1.5
   input_device: null  # null = system default microphone
+
+speech:
+  model_size: small
+  device: auto
+  compute_type: default
+  language: en  # null = auto-detect language per utterance
+  silence_rms_threshold: 300.0
+  end_silence_seconds: 1.0
+  initial_timeout_seconds: 3.0
+  max_duration_seconds: 10.0

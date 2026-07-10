@@ -4,8 +4,8 @@ Responsible only for wiring things together:
     1. Load configuration.
     2. Set up logging.
     3. Construct the (placeholder, no-op) Aura controller.
-    4. Construct voice activation (microphone + wake word detection) and
-       bridge its detections onto the Qt main thread.
+    4. Construct voice activation (microphone + wake word detection +
+       speech-to-text) and bridge its events onto the Qt main thread.
     5. Launch the Qt application and a minimal window.
 
 No feature logic belongs here — this file should stay small forever.
@@ -19,6 +19,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
+from app.transcript_bridge import TranscriptBridge
 from app.wake_word_bridge import WakeWordBridge
 from aura.controller import AuraController
 from aura.renderer.null_renderer import NullAuraRenderer
@@ -29,9 +30,9 @@ from utils.logger import setup_logging
 logger = logging.getLogger(__name__)
 
 # `voice.service` depends on the optional "speech" extras (openwakeword,
-# sounddevice) — see pyproject.toml and docs/DECISIONS.md. Import it
-# defensively so Iris still launches with just the core dependencies
-# installed; voice activation is simply unavailable in that case.
+# sounddevice, faster-whisper) — see pyproject.toml and docs/DECISIONS.md.
+# Import it defensively so Iris still launches with just the core
+# dependencies installed; voice activation is simply unavailable in that case.
 try:
     from voice.service import VoiceActivationService
 
@@ -54,21 +55,43 @@ def main() -> int:
     aura = AuraController(renderer=NullAuraRenderer())
     aura.start()
 
-    # Bridge: audio thread -> Qt main thread. See app/wake_word_bridge.py.
+    # Bridges: audio/worker threads -> Qt main thread. See
+    # app/wake_word_bridge.py and app/transcript_bridge.py.
     wake_word_bridge = WakeWordBridge()
+    transcript_bridge = TranscriptBridge()
 
     def on_wake_word_detected(model_name: str, score: float) -> None:
         # Runs on the main thread (Qt queues the signal delivery for us).
         logger.info("Wake word '%s' detected (score=%.3f) — Aura -> LISTENING", model_name, score)
         aura.set_state(AuraState.LISTENING)
 
+    def on_transcribed(text: str) -> None:
+        # Runs on the main thread. No LLM integration yet (Milestone 4) —
+        # for now we just log the transcript and briefly show THINKING
+        # before returning to IDLE.
+        logger.info('Transcribed: "%s" — Aura -> THINKING', text)
+        aura.set_state(AuraState.THINKING)
+        # TODO (Milestone 4): keep THINKING while awaiting an LLM response
+        # instead of immediately returning to IDLE.
+        aura.set_state(AuraState.IDLE)
+
+    def on_no_speech_detected() -> None:
+        # Runs on the main thread. Wake word fired but nothing was said
+        # (or transcription was unavailable) — just go back to idle.
+        logger.info("No speech recognized — Aura -> IDLE")
+        aura.set_state(AuraState.IDLE)
+
     wake_word_bridge.detected.connect(on_wake_word_detected)
+    transcript_bridge.transcribed.connect(on_transcribed)
+    transcript_bridge.no_speech_detected.connect(on_no_speech_detected)
 
     voice_service = None
     if _VOICE_AVAILABLE:
         voice_service = VoiceActivationService(
-            settings=settings.voice,
+            voice_settings=settings.voice,
+            speech_settings=settings.speech,
             on_wake_word=wake_word_bridge.report_detection,
+            on_transcript=transcript_bridge.report_transcript,
         )
         if not voice_service.start():
             logger.warning("Continuing without voice activation this session (see error above).")
