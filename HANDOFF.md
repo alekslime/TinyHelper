@@ -13,21 +13,21 @@ debug-typed) command now gets a real generated response instead of the
 `TODO (Milestone 4)` placeholder. Built in one part, since the shape
 closely follows Milestone 3's speech-to-text wiring:
 
-1. **`llm/generator.py`** — `LLMGenerator`, wraps a llama.cpp `Llama`
+1. **`llm/engine.py`** — `LLMEngine`, wraps a llama.cpp `Llama`
    instance. Downloads its GGUF model from Hugging Face Hub via
    `Llama.from_pretrained(repo_id, filename)` by default (cached after
    first use, same pattern as Faster-Whisper), or loads a local `.gguf`
-   directly if `llm.model_path` is set in config. Single-turn
+   directly if `llm.local_model_path` is set in config. Single-turn
    `generate(user_text) -> str`, no conversation memory yet (Milestone 9).
-2. **`app/llm_response_bridge.py`** — Qt signal bridge (`response_ready`,
-   `generation_error`), same pattern as `transcript_bridge.py`.
+2. **`app/llm_bridge.py`** — Qt signal bridge (`response_ready`,
+   `generation_failed`), same pattern as `transcript_bridge.py`.
 3. **Wiring in `main.py`** — `on_transcribed()` now keeps Aura in THINKING
-   and runs `LLMGenerator.generate()` on a dedicated worker thread
+   and runs `LLMEngine.generate()` on a dedicated worker thread
    (`_run_generation`), never the audio callback or Qt main thread. The
-   result reaches the main thread via `llm_response_bridge`, which drives
-   `on_llm_response()` (display + Aura → IDLE) or `on_llm_error()`
+   result reaches the main thread via `llm_bridge`, which drives
+   `on_llm_response()` (display + Aura → IDLE) or `on_llm_failed()`
    (display + Aura → ERROR). LLM construction failure (missing extra, or
-   model load/download failure) leaves `llm_generator = None` and
+   model load/download failure) leaves `llm_engine = None` and
    `on_transcribed()` shows a fallback message instead of crashing —
    same graceful-degradation pattern as the transcriber.
 4. **`app/main_window.py`** — added a read-only response text area (not
@@ -35,25 +35,25 @@ closely follows Milestone 3's speech-to-text wiring:
    way to see a response at all until Milestone 8 adds voice output) and
    a `show_response(text)` method.
 5. **`config/schema.py` / `config/default_config.yaml`** — new `LLMSettings`
-   / `llm:` section: `repo_id`, `filename`, `model_path`, `context_size`,
-   `gpu_layers`, `max_tokens`, `temperature`, `system_prompt`.
+   / `llm:` section: `repo_id`, `filename`, `local_model_path`, `n_ctx`,
+   `n_gpu_layers`, `max_tokens`, `temperature`, `system_prompt`.
 
 ## Files created
 
 ```
 iris/
 ├── app/
-│   └── llm_response_bridge.py    (new)
+│   └── llm_bridge.py    (new)
 ├── llm/
-│   └── generator.py              (new)
+│   └── engine.py        (new)
 ```
 
 ## Files modified
 
 - `main.py` — LLM construction (defensive import + graceful load-failure
-  handling, same shape as `voice.service`), `llm_response_bridge` wiring,
+  handling, same shape as `voice.service`), `llm_bridge` wiring,
   `on_transcribed()` now spawns a worker thread for generation instead of
-  immediately returning to IDLE, new `on_llm_response()`/`on_llm_error()`
+  immediately returning to IDLE, new `on_llm_response()`/`on_llm_failed()`
   handlers.
 - `app/main_window.py` — added the response display area + `show_response()`.
 - `config/schema.py` — added `LLMSettings`, registered on `AppSettings`.
@@ -79,15 +79,15 @@ iris/
 
 ## Important implementation details
 
-- **Default model:** `bartowski/Qwen2.5-1.5B-Instruct-GGUF`,
-  `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (~1GB). Picked to get the full
+- **Default model:** `Qwen/Qwen2.5-0.5B-Instruct-GGUF`,
+  `qwen2.5-0.5b-instruct-q4_k_m.gguf` (~1GB). Picked to get the full
   pipeline working end-to-end quickly, not for best quality on the
   documented RTX 3070 Ti target — see `docs/DECISIONS.md`. Swapping models
   is a one-line `config.yaml` change (`llm.repo_id`/`llm.filename` for
-  another HF-hosted GGUF, or `llm.model_path` for a local file already on
+  another HF-hosted GGUF, or `llm.local_model_path` for a local file already on
   disk) — no code changes needed either way.
 - **`gpu_layers: -1`** (default) tells llama.cpp to offload as many layers
-  as fit on the GPU. Should put the whole 1.5B model on the GPU comfortably
+  as fit on the GPU. Should put the whole 0.5B model on the GPU comfortably
   on both the 3070 Ti and the dev laptop, but this is reasoned about, not
   yet measured on real hardware (see "Known issues").
 - **Generation runs on a dedicated worker thread**, same reasoning as
@@ -98,7 +98,7 @@ iris/
   seeded only with `llm.system_prompt`. Multi-turn context is Milestone 9.
 - **LLM failure (missing extra or load failure) does not disable voice/
   transcription.** Mirrors the transcriber's failure isolation from
-  Milestone 3 — `llm_generator` is `None` in that case, and
+  Milestone 3 — `llm_engine` is `None` in that case, and
   `on_transcribed()` shows a fallback message and returns Aura to IDLE
   instead of attempting generation.
 - **Response display, not gated by `debug.enabled`.** Unlike the debug
@@ -115,7 +115,7 @@ unchanged from Milestone 3's `HANDOFF.md`.
 
 - **Real LLM generation has NOT been verified end-to-end on real hardware
   yet.** Same category of gap as Milestone 3's Whisper transcription —
-  this dev sandbox has no Hugging Face Hub access, so `LLMGenerator` could
+  this dev sandbox has no Hugging Face Hub access, so `LLMEngine` could
   only be verified for its import-failure and graceful-degradation paths
   (via the debug text input, with no `llm` extra installed), not actual
   generation: model download, load time, VRAM usage, response quality, or
@@ -130,14 +130,14 @@ unchanged from Milestone 3's `HANDOFF.md`.
   for Whisper. Worth timing combined startup on real hardware.
 - Same open items as Milestone 3's `HANDOFF.md` re: real-mic silence
   detection tuning and `tests/` still being empty — now also applicable to
-  `llm/generator.py`, which has zero test coverage.
+  `llm/engine.py`, which has zero test coverage.
 
 ## Testing performed
 
 1. **`config/schema.py` / `config/default_config.yaml`:** loaded the YAML
    through `AppSettings` directly — validates cleanly, `llm.*` fields
    populate with the expected defaults — PASS.
-2. **`llm/generator.py` / `main.py` import wiring:** confirmed the
+2. **`llm/engine.py` / `main.py` import wiring:** confirmed the
    `try/except ImportError` path fires correctly with `llama-cpp-python`
    genuinely not installed in this sandbox (not simulated) — app logs the
    warning and continues rather than crashing.
@@ -145,7 +145,7 @@ unchanged from Milestone 3's `HANDOFF.md`.
    run):** app starts, both voice and LLM dependencies genuinely missing
    in this sandbox → both warnings logged, window constructs, no crash.
 4. **Debug text input → no-LLM fallback path:** emitted
-   `debug_text_submitted` programmatically with `llm_generator is None`,
+   `debug_text_submitted` programmatically with `llm_engine is None`,
    confirmed `on_transcribed()` shows the fallback message in
    `MainWindow`'s response area and Aura returns to IDLE without error —
    PASS.
@@ -166,7 +166,7 @@ target machine's Hugging Face access.
 **Milestone 5 — Screen Capture + Vision**, via MSS + an ONNX Runtime
 vision model. See `docs/ROADMAP.md` for scope and `docs/TODO.md` for
 specific next actions, including deciding how vision output folds into
-the LLM prompt built for `llm/generator.py`.
+the LLM prompt built for `llm/engine.py`.
 
 ## Ready-to-copy prompt for the next session
 
@@ -188,7 +188,7 @@ sandbox (no Hugging Face Hub access). Before starting Milestone 5, please:
      within a few seconds
   4. Note the model download time, load time, and rough response latency
   5. Report back what you observed before we proceed — including whether
-     the default small model (Qwen2.5-1.5B) feels worth upgrading now
+     the default small model (Qwen2.5-0.5B) feels worth upgrading now
      that we can see real headroom on this hardware
 
 Once that's confirmed, start Milestone 5 — Screen Capture + Vision, as

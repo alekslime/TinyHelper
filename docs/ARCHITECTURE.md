@@ -121,14 +121,14 @@ signal-bridge pattern as wake word detections.
 
 `llm/` follows the same single-responsibility pattern as `voice/`/`speech/`:
 
-- `llm/generator.py` — `LLMGenerator`: wraps a llama.cpp `Llama` instance
+- `llm/engine.py` — `LLMEngine`: wraps a llama.cpp `Llama` instance
   (via `llama-cpp-python`) for single-turn prompt/response. Knows nothing
   about transcripts, Aura, or threading — takes text in, returns text out.
 
-`main.py` hands each transcript to `LLMGenerator.generate()` on a
+`main.py` hands each transcript to `LLMEngine.generate()` on a
 dedicated worker thread (never the audio callback or Qt main thread — see
 `docs/DECISIONS.md`), with the result delivered back to the main thread
-via `app/llm_response_bridge.py`'s `LLMResponseBridge`, the same
+via `app/llm_bridge.py`'s `LLMResponseBridge`, the same
 signal-bridge pattern used for wake word detections and transcripts.
 There is no conversation memory yet (Milestone 9) — each call is
 independent, seeded only with a system prompt.
@@ -151,10 +151,10 @@ Transcribed on a background thread (speech/transcriber.py)
 Aura → THINKING (via app/transcript_bridge.py)
         │
         ▼
-LLM generates a response on a background thread (llm/generator.py)
+LLM generates a response on a background thread (llm/engine.py)
         │
         ▼
-Response shown in the placeholder window (via app/llm_response_bridge.py)
+Response shown in the placeholder window (via app/llm_bridge.py)
         │
         ▼
 Aura → IDLE

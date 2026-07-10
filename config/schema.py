@@ -161,6 +161,42 @@ class LLMSettings(BaseModel):
     )
 
 
+class VisionSettings(BaseModel):
+    """Screen capture settings (Milestone 5).
+
+    Privacy is the default: `vision/capture.py`'s `ScreenCapture` returns
+    an in-memory image and nothing is written to disk unless
+    `save_debug_screenshots` is explicitly turned on for local debugging.
+    """
+
+    monitor_index: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Which monitor to capture, per `mss`'s numbering. 0 = the "
+            "virtual bounding box of *all* monitors combined; 1, 2, ... "
+            "select an individual monitor."
+        ),
+    )
+    save_debug_screenshots: bool = Field(
+        default=False,
+        description=(
+            "Developer aid only. When true, each capture is also written "
+            "to disk under debug_screenshot_dir for inspection. Off by "
+            "default -- screenshots are discarded after use, per Iris's "
+            "privacy-by-default principle."
+        ),
+    )
+    debug_screenshot_dir: str | None = Field(
+        default=None,
+        description=(
+            "Directory to write debug screenshots to when "
+            "save_debug_screenshots is true. None = "
+            "<app data dir>/data/debug_screenshots."
+        ),
+    )
+
+
 class DebugSettings(BaseModel):
     """Developer-only debug aids. None of this is part of Iris's intended
     end-user UX (which uses Aura + system tray, no visible windows or chat
@@ -192,4 +228,5 @@ class AppSettings(BaseModel):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     speech: SpeechSettings = Field(default_factory=SpeechSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    vision: VisionSettings = Field(default_factory=VisionSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)

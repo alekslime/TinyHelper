@@ -50,5 +50,10 @@ llm:
     You are Iris, a concise local AI desktop copilot. Keep answers short
     and to the point unless the user asks for more detail.
 
+vision:
+  monitor_index: 0  # 0 = all monitors combined; 1, 2, ... = a single monitor
+  save_debug_screenshots: false  # developer aid only -- screenshots are discarded after use by default
+  debug_screenshot_dir: null  # null = <app data dir>/data/debug_screenshots
+
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

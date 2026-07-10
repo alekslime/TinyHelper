@@ -6,33 +6,38 @@ loose ends.
 
 ## Immediate next steps (Milestone 5 — Screen Capture + Vision)
 
-- [ ] Integrate MSS for screenshot capture
+- [x] Integrate MSS for screenshot capture — `vision/capture.py`'s
+      `ScreenCapture`, plus `config.schema.VisionSettings`. Verified for
+      real under Xvfb in the dev sandbox (capture, debug-save-to-disk,
+      and the out-of-range monitor_index error path all exercised).
+      **Not yet wired into `main.py`** — no consumer exists until the
+      vision model lands, next.
 - [ ] Vision model integration (ONNX Runtime)
 - [ ] Screenshot discarded after use by default (privacy requirement)
 - [ ] Decide how vision context reaches the LLM prompt (e.g. a vision
       model produces a text description that gets appended to the user's
-      transcript before `LLMGenerator.generate()` is called)
+      transcript before `LLMEngine.generate()` is called)
 
 ## Loose ends / small items
 
 - [ ] **Real LLM generation has NOT been verified end-to-end on real
       hardware yet** — same category of gap as Milestone 3's Whisper
       transcription. This sandbox has no Hugging Face Hub access, so
-      `LLMGenerator` could only be verified for its graceful-failure path
+      `LLMEngine` could only be verified for its graceful-failure path
       (dependencies missing / model load failure), not actual generation
       quality, latency, or VRAM usage on the RTX 3070 Ti or the laptop.
       Next session on real hardware should: `pip install -e ".[llm]"`,
       run `main.py`, use the debug text input (or real voice) to ask a
       question, and confirm a reasonable response appears in the window
       and the console within a few seconds.
-- [ ] The default model (`bartowski/Qwen2.5-1.5B-Instruct-GGUF`,
+- [ ] The default model (`Qwen/Qwen2.5-0.5B-Instruct-GGUF`,
       Q4_K_M) was picked to get something small and fast working
       end-to-end, not for response quality — revisit once real hardware
       testing shows how much headroom the 3070 Ti / laptop actually have.
       Swapping models is a one-line `config.yaml` change
-      (`llm.repo_id`/`llm.filename`, or `llm.model_path` for a local
+      (`llm.repo_id`/`llm.filename`, or `llm.local_model_path` for a local
       file) — no code changes needed.
-- [ ] No conversation memory yet — each `LLMGenerator.generate()` call is
+- [ ] No conversation memory yet — each `LLMEngine.generate()` call is
       independent, seeded only with the system prompt. That's
       Milestone 9 (Conversation Memory).
 - [ ] LLM responses are currently just displayed as text in the
@@ -64,7 +69,7 @@ loose ends.
       microphones, different speaking volumes). Revisit if real usage on
       the Windows machine shows utterances cutting off early or running
       long.
-- [ ] `speech/transcriber.py` and `llm/generator.py` both load their
+- [ ] `speech/transcriber.py` and `llm/engine.py` both load their
       models eagerly at startup, same as the wake word model. On the
       Quadro M3000M laptop (weaker than the documented RTX 3070 Ti
       target), this may add real time to startup — worth timing on real

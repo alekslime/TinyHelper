@@ -256,11 +256,11 @@ was never meant to be the shipped experience.
 
 ## 2026-07-10 — LLM loaded via `Llama.from_pretrained`, same download-and-cache pattern as Whisper
 
-**Decision:** `llm/generator.py`'s `LLMGenerator` downloads its GGUF model
+**Decision:** `llm/engine.py`'s `LLMEngine` downloads its GGUF model
 from Hugging Face Hub via `llama_cpp.Llama.from_pretrained(repo_id,
 filename, ...)` by default, caching it locally after the first run — same
 one-time-setup-download pattern as `speech/transcriber.py`'s Faster-Whisper
-model. `config.yaml`'s `llm.model_path` can override this with a path to
+model. `config.yaml`'s `llm.local_model_path` can override this with a path to
 an already-downloaded local `.gguf` file instead, for swapping between
 models on disk without touching config defaults.
 
@@ -274,12 +274,12 @@ extras group.
 
 ## 2026-07-10 — Default model picked for "small and working," not final quality
 
-**Decision:** Milestone 4 ships with `bartowski/Qwen2.5-1.5B-Instruct-GGUF`
+**Decision:** Milestone 4 ships with `Qwen/Qwen2.5-0.5B-Instruct-GGUF`
 (`Q4_K_M` quantization, ~1GB) as the default `llm.repo_id`/`llm.filename`.
 
 **Why:** The immediate goal was getting the full wake-word → transcribe →
 generate → display pipeline working end-to-end, not picking the best
-model the target 8GB-VRAM RTX 3070 Ti could run — a 1.5B model comfortably
+model the target 8GB-VRAM RTX 3070 Ti could run — a 0.5B model comfortably
 fits on both the 3070 Ti and the weaker dev laptop, downloads quickly, and
 is enough to prove the pipeline. Response quality was explicitly
 deprioritized for this milestone; swapping to a larger/better model once
@@ -291,9 +291,9 @@ change (see the `from_pretrained` decision above), not a code change.
 ## 2026-07-10 — LLM generation runs on a dedicated worker thread, same as transcription
 
 **Decision:** `main.py`'s `on_transcribed()` hands the transcript to a new
-`threading.Thread` calling `LLMGenerator.generate()`, rather than calling
+`threading.Thread` calling `LLMEngine.generate()`, rather than calling
 it directly. The result (or error) reaches the Qt main thread via
-`app/llm_response_bridge.py`'s `LLMResponseBridge`, the same signal-bridge
+`app/llm_bridge.py`'s `LLMResponseBridge`, the same signal-bridge
 pattern as `WakeWordBridge`/`TranscriptBridge`.
 
 **Why:** Generation can take anywhere from under a second to several
@@ -308,7 +308,7 @@ to IDLE (or ERROR, on failure) only once the bridge delivers a result.
 
 **Decision:** `main.py` imports `llm.generator` inside a
 `try/except ImportError` (same pattern as `voice.service`), and separately
-catches `RuntimeError` from `LLMGenerator`'s constructor (model load
+catches `RuntimeError` from `LLMEngine`'s constructor (model load
 failure). Either way, `llm_generator` is left `None` and `on_transcribed()`
 shows a fallback message in the window instead of attempting generation.
 
@@ -318,3 +318,31 @@ disabling wake word detection): a missing extra or a failed model
 download/load should degrade the specific feature it affects, not take
 down the whole app. Voice input still works and gets logged even with no
 LLM available.
+
+---
+
+## 2026-07-10 — Screen capture opens a fresh `mss` context per call
+
+**Decision:** `vision/capture.py`'s `ScreenCapture.capture()` opens and
+closes its own `mss.mss()` context on every call rather than holding one
+open for the object's lifetime.
+
+**Why:** Screen capture in Iris is occasional — triggered per user query,
+not continuous (see the README's "no continuous screen or audio
+monitoring" privacy principle) — so the small per-call setup cost isn't
+worth the complexity of managing a long-lived native handle across calls
+and threads. Matches the project's general bias toward simple, obviously-
+correct code over premature optimization.
+
+## 2026-07-10 — Screenshots are in-memory only unless a debug flag is set
+
+**Decision:** `ScreenCapture.capture()` never touches disk. Writing a
+screenshot to disk only happens via the separate
+`capture_and_maybe_save()` method, gated by `vision.save_debug_screenshots`
+in config (default `false`).
+
+**Why:** Enforces the "screenshots are analyzed and discarded unless you
+explicitly choose to keep one" privacy principle in code, not just docs —
+the default path (whatever Milestone 5's vision model integration ends up
+calling) can't accidentally start persisting screenshots without an
+explicit config change.

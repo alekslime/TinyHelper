@@ -18,6 +18,7 @@ Requires-Dist: llama-cpp-python>=0.2.90; extra == "llm"
 Requires-Dist: huggingface_hub>=0.23.0; extra == "llm"
 Provides-Extra: vision
 Requires-Dist: mss>=9.0.1; extra == "vision"
+Requires-Dist: Pillow>=10.3.0; extra == "vision"
 Requires-Dist: opencv-python>=4.10.0; extra == "vision"
 Requires-Dist: onnxruntime-gpu>=1.18.0; extra == "vision"
 Provides-Extra: windows
@@ -96,7 +97,7 @@ it drives Aura through the exact same LISTENING → THINKING → IDLE sequence
 real voice input would, no microphone or speaking required.
 
 To also enable local LLM responses (default model is a small ~1GB
-`Qwen2.5-1.5B-Instruct` GGUF, downloaded and cached on first use — see
+`Qwen2.5-0.5B-Instruct` GGUF, downloaded and cached on first use — see
 `config.yaml`'s `llm:` section to point at a different model):
 
 ```bash

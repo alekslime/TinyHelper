@@ -66,7 +66,7 @@ it drives Aura through the exact same LISTENING → THINKING → IDLE sequence
 real voice input would, no microphone or speaking required.
 
 To also enable local LLM responses (default model is a small ~1GB
-`Qwen2.5-1.5B-Instruct` GGUF, downloaded and cached on first use — see
+`Qwen2.5-0.5B-Instruct` GGUF, downloaded and cached on first use — see
 `config.yaml`'s `llm:` section to point at a different model):
 
 ```bash

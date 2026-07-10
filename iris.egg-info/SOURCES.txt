@@ -35,6 +35,7 @@ speech/transcriber.py
 utils/__init__.py
 utils/logger.py
 vision/__init__.py
+vision/capture.py
 voice/__init__.py
 voice/audio_stream.py
 voice/service.py
