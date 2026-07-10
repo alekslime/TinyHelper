@@ -10,6 +10,7 @@ mypy>=1.10.0
 
 [llm]
 llama-cpp-python>=0.2.90
+huggingface_hub>=0.23.0
 
 [speech]
 faster-whisper>=1.0.0

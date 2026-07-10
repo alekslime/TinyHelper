@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 app/__init__.py
+app/llm_bridge.py
 app/main_window.py
 app/transcript_bridge.py
 app/wake_word_bridge.py
@@ -25,6 +26,7 @@ iris.egg-info/entry_points.txt
 iris.egg-info/requires.txt
 iris.egg-info/top_level.txt
 llm/__init__.py
+llm/engine.py
 memory/__init__.py
 overlay/__init__.py
 speech/__init__.py

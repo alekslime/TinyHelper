@@ -1,204 +1,172 @@
 # HANDOFF.md
 
-**Last updated:** 2026-07-09
-**Milestone completed:** Milestone 3 — Speech-to-Text ✅
+**Last updated:** 2026-07-10
+**Milestone completed:** Milestone 4 — Local LLM Integration ✅
 
 ---
 
 ## Summary of work completed
 
-Milestone 3 is complete: local speech-to-text via Faster-Whisper, silence-based
-utterance capture, and full wiring so a spoken command after "Hey Jarvis"
-gets transcribed and logged, with Aura transitioning LISTENING → THINKING →
-IDLE. Built in three parts:
+Milestone 4 is complete: local LLM text generation via llama.cpp
+(`llama-cpp-python`), wired into `on_transcribed()` so a transcribed (or
+debug-typed) command now gets a real generated response instead of the
+`TODO (Milestone 4)` placeholder. Built in one part, since the shape
+closely follows Milestone 3's speech-to-text wiring:
 
-1. **`speech/transcriber.py`** — Faster-Whisper wrapper. Verified the real
-   API via `inspect.signature()` before writing code (lesson learned from
-   Milestone 2's openWakeWord version mismatch). Could NOT test actual
-   transcription in this sandbox — Hugging Face Hub (where model weights
-   download from) isn't on the sandbox's allowed network list. Tested what
-   was possible offline: audio format conversion, and the download-failure
-   error path (which really did fail, for real, since HF is genuinely
-   blocked here — confirmed it's wrapped in a clean `RuntimeError` instead
-   of a raw traceback).
-2. **`speech/listening_session.py`** — RMS-based silence detection for
-   knowing when an utterance is complete. Fully testable offline (pure
-   signal math). 4 synthetic edge-case tests (normal flow, no-speech
-   timeout, continuous-speech safety cap, post-finish idempotency), all
-   passing. Silence threshold (300) sanity-checked against real recorded
-   speech audio (RMS peaks 6,000-10,000) — well-calibrated.
-3. **Full wiring** — `config/schema.py` `SpeechSettings`,
-   `app/transcript_bridge.py` (Qt signal bridge, same pattern as the wake
-   word bridge), and a substantial rewrite of `voice/service.py` to
-   orchestrate mode-based frame routing (wake word detector vs. active
-   listening session) and background-thread transcription. `main.py`
-   updated to wire the new `on_transcript` callback through to Aura state
-   transitions.
+1. **`llm/generator.py`** — `LLMGenerator`, wraps a llama.cpp `Llama`
+   instance. Downloads its GGUF model from Hugging Face Hub via
+   `Llama.from_pretrained(repo_id, filename)` by default (cached after
+   first use, same pattern as Faster-Whisper), or loads a local `.gguf`
+   directly if `llm.model_path` is set in config. Single-turn
+   `generate(user_text) -> str`, no conversation memory yet (Milestone 9).
+2. **`app/llm_response_bridge.py`** — Qt signal bridge (`response_ready`,
+   `generation_error`), same pattern as `transcript_bridge.py`.
+3. **Wiring in `main.py`** — `on_transcribed()` now keeps Aura in THINKING
+   and runs `LLMGenerator.generate()` on a dedicated worker thread
+   (`_run_generation`), never the audio callback or Qt main thread. The
+   result reaches the main thread via `llm_response_bridge`, which drives
+   `on_llm_response()` (display + Aura → IDLE) or `on_llm_error()`
+   (display + Aura → ERROR). LLM construction failure (missing extra, or
+   model load/download failure) leaves `llm_generator = None` and
+   `on_transcribed()` shows a fallback message instead of crashing —
+   same graceful-degradation pattern as the transcriber.
+4. **`app/main_window.py`** — added a read-only response text area (not
+   gated by `debug.enabled`, unlike the debug input — this is the only
+   way to see a response at all until Milestone 8 adds voice output) and
+   a `show_response(text)` method.
+5. **`config/schema.py` / `config/default_config.yaml`** — new `LLMSettings`
+   / `llm:` section: `repo_id`, `filename`, `model_path`, `context_size`,
+   `gpu_layers`, `max_tokens`, `temperature`, `system_prompt`.
 
 ## Files created
 
 ```
 iris/
 ├── app/
-│   └── transcript_bridge.py      (new)
-├── speech/
-│   ├── listening_session.py      (new)
-│   └── transcriber.py            (new)
+│   └── llm_response_bridge.py    (new)
+├── llm/
+│   └── generator.py              (new)
 ```
 
 ## Files modified
 
-- `voice/service.py` — substantially rewritten: `VoiceActivationService`
-  now takes both `voice_settings` and `speech_settings`, plus
-  `on_wake_word` and `on_transcript` callbacks (was just `settings` +
-  `on_wake_word`). Owns mode-based frame routing between the wake word
-  detector and an active `ListeningSession`. Transcriber load failure is
-  now handled gracefully (see "Important implementation details").
-- `main.py` — wires `TranscriptBridge`, updated `VoiceActivationService`
-  construction call to match the new signature, added `on_transcribed` /
-  `on_no_speech_detected` handlers driving Aura LISTENING → THINKING → IDLE.
-- `config/schema.py` — added `SpeechSettings`, registered on `AppSettings`
-- `config/default_config.yaml` — added `speech:` section
-- `docs/ROADMAP.md` — Milestone 3 marked complete
-- `docs/ARCHITECTURE.md` — documented `speech/` module split, updated the
-  data-flow diagram to reflect current (not just aspirational) state
-- `docs/DECISIONS.md` — four new entries: speech-to-text failure isolation
-  from wake word, mode-based single-stream frame routing, background-thread
-  transcription
-- `docs/TODO.md` — rewritten for Milestone 4 (LLM integration) next steps
-- `README.md` — updated status and testing instructions
+- `main.py` — LLM construction (defensive import + graceful load-failure
+  handling, same shape as `voice.service`), `llm_response_bridge` wiring,
+  `on_transcribed()` now spawns a worker thread for generation instead of
+  immediately returning to IDLE, new `on_llm_response()`/`on_llm_error()`
+  handlers.
+- `app/main_window.py` — added the response display area + `show_response()`.
+- `config/schema.py` — added `LLMSettings`, registered on `AppSettings`.
+- `config/default_config.yaml` — added `llm:` section.
+- `pyproject.toml` — added `huggingface_hub` to the `llm` extras group
+  (needed by `Llama.from_pretrained`).
+- `docs/ROADMAP.md` — Milestone 4 marked complete.
+- `docs/ARCHITECTURE.md` — documented `llm/` module structure, updated the
+  data-flow diagram.
+- `docs/DECISIONS.md` — four new entries: model download/cache pattern,
+  default-model rationale ("small and working" over "best for target
+  hardware"), worker-thread generation, graceful LLM failure handling.
+- `docs/TODO.md` — rewritten for Milestone 5 (screen capture + vision)
+  next steps.
+- `README.md` — updated status and testing instructions.
 
 ## Dependencies added
 
-None — `faster-whisper` was already declared in the `speech` extras group
-since Milestone 1's `pyproject.toml` scaffolding (just unused until now).
+- `huggingface_hub>=0.23.0` (new, `llm` extras group) — required by
+  `Llama.from_pretrained()` for the download-and-cache flow.
+- `llama-cpp-python` was already declared in the `llm` extras group since
+  Milestone 1's `pyproject.toml` scaffolding (just unused until now).
 
 ## Important implementation details
 
-- **Transcriber load failure does NOT disable wake word detection.**
-  `VoiceActivationService.__init__` catches any exception loading the
-  Faster-Whisper model and sets `self._transcriber = None` rather than
-  letting construction fail — verified directly in this sandbox (real HF
-  network failure), confirmed wake word detection still fires correctly
-  end-to-end afterward.
-- **Single microphone stream, mode-based routing.** `VoiceActivationService._handle_frame()`
-  routes each frame to either `WakeWordDetector.process_frame()` or the
-  active `ListeningSession.add_frame()`, never both, based on whether
-  `self._listening_session` is set. Avoids opening two simultaneous audio
-  device streams.
-- **Transcription runs on a dedicated worker thread**, never the audio
-  callback thread or the Qt main thread. As soon as a `ListeningSession`
-  finishes, it's cleared immediately (frame routing goes back to wake-word
-  mode with no gap) and a `threading.Thread` picks up the actual
-  transcription work.
-- **Three ways an utterance capture can end** (see
-  `speech/listening_session.py`): silence after speech (normal case),
-  initial timeout if nobody speaks at all (e.g. accidental wake word），or
-  a max-duration safety cap regardless. Current defaults: 1s end-silence,
-  3s initial timeout, 10s max duration — all configurable via
-  `config.yaml`'s `speech:` section.
-- **No LLM integration yet.** `main.py`'s `on_transcribed()` currently sets
-  Aura to THINKING then immediately back to IDLE with a `TODO (Milestone 4)`
-  comment marking where the actual LLM call will go.
+- **Default model:** `bartowski/Qwen2.5-1.5B-Instruct-GGUF`,
+  `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (~1GB). Picked to get the full
+  pipeline working end-to-end quickly, not for best quality on the
+  documented RTX 3070 Ti target — see `docs/DECISIONS.md`. Swapping models
+  is a one-line `config.yaml` change (`llm.repo_id`/`llm.filename` for
+  another HF-hosted GGUF, or `llm.model_path` for a local file already on
+  disk) — no code changes needed either way.
+- **`gpu_layers: -1`** (default) tells llama.cpp to offload as many layers
+  as fit on the GPU. Should put the whole 1.5B model on the GPU comfortably
+  on both the 3070 Ti and the dev laptop, but this is reasoned about, not
+  yet measured on real hardware (see "Known issues").
+- **Generation runs on a dedicated worker thread**, same reasoning as
+  Milestone 3's transcription: a `threading.Thread` per request, result
+  delivered back to Qt via `LLMResponseBridge`. Aura stays in THINKING for
+  the duration.
+- **No conversation memory.** Each `generate()` call is independent,
+  seeded only with `llm.system_prompt`. Multi-turn context is Milestone 9.
+- **LLM failure (missing extra or load failure) does not disable voice/
+  transcription.** Mirrors the transcriber's failure isolation from
+  Milestone 3 — `llm_generator` is `None` in that case, and
+  `on_transcribed()` shows a fallback message and returns Aura to IDLE
+  instead of attempting generation.
+- **Response display, not gated by `debug.enabled`.** Unlike the debug
+  text *input*, the response *display* is core Milestone 4 functionality
+  (there's no other way to see a response yet, pending Milestone 8's
+  voice output) — so it always shows, debug panel or not.
 
 ## Current folder structure
 
 See "Files created" above for what's new; full structure otherwise
-unchanged from Milestone 2's `HANDOFF.md`.
+unchanged from Milestone 3's `HANDOFF.md`.
 
 ## Known issues
 
-- None blocking. Same offscreen-Qt-plugin cosmetic stderr line as prior
-  milestones when testing in this sandbox — expected, not a real issue.
-- **Real end-to-end transcription has NOT been verified on real hardware
-  yet.** Unlike wake word detection (which was verified via GitHub-hosted
-  test audio, then confirmed live on the user's Windows machine),
-  Hugging Face Hub is blocked in this dev sandbox, so `Transcriber` could
-  only be tested for its error-handling path, not actual transcription
-  accuracy or the real download flow. **The next session should verify:**
-  `pip install -e ".[speech]"` (already includes faster-whisper), run
-  `main.py`, say "Hey Jarvis" followed by a command, and confirm the
-  console logs a reasonable transcription of what was actually said.
-  First run will download Faster-Whisper model weights (~500MB-1GB
-  depending on model size) — needs internet, one-time only.
-- **Silence detection tuning is unverified on real hardware.** The RMS
-  threshold and timeouts were reasoned about mathematically and checked
-  against one clean pre-recorded sample, not tested with real background
-  noise, varying microphone sensitivity, or varying speaking volume. If
-  utterances cut off too early or run long on the real machine, start by
-  adjusting `speech.silence_rms_threshold` and `speech.end_silence_seconds`
-  in `config.yaml`.
-- **Startup time on the Quadro M3000M laptop is unmeasured.** Both the wake
-  word model and the Faster-Whisper model now load eagerly at startup.
-  This laptop is notably weaker than the documented RTX 3070 Ti target
-  hardware (see `docs/DECISIONS.md`/`docs/ARCHITECTURE.md` — target
-  hardware docs were deliberately NOT changed per the user's explicit
-  request; the laptop is for testing only). Worth timing actual startup
-  and reconsidering lazy-loading if it's slow enough to be annoying during
-  development.
-- `tests/` package is still empty — flagged again, now genuinely overdue
-  given the amount of real logic in `voice/` and `speech/`.
+- **Real LLM generation has NOT been verified end-to-end on real hardware
+  yet.** Same category of gap as Milestone 3's Whisper transcription —
+  this dev sandbox has no Hugging Face Hub access, so `LLMGenerator` could
+  only be verified for its import-failure and graceful-degradation paths
+  (via the debug text input, with no `llm` extra installed), not actual
+  generation: model download, load time, VRAM usage, response quality, or
+  latency. **The next session on real hardware should:**
+  `pip install -e ".[llm]"`, run `main.py`, use the debug text input (or
+  real voice, once verified per Milestone 3's open item) to ask something,
+  and confirm a reasonable response shows up in the window and console
+  within a few seconds. Report back before deciding whether to keep the
+  default model or swap to something bigger.
+- **Startup time impact unmeasured.** The LLM now loads eagerly at startup
+  alongside the wake word and Whisper models, same as Milestone 3 flagged
+  for Whisper. Worth timing combined startup on real hardware.
+- Same open items as Milestone 3's `HANDOFF.md` re: real-mic silence
+  detection tuning and `tests/` still being empty — now also applicable to
+  `llm/generator.py`, which has zero test coverage.
 
 ## Testing performed
 
-1. **`speech/transcriber.py`:**
-   - `int16_to_float32()` conversion — verified correct, properly normalized.
-   - Model load failure — verified real `RuntimeError` wrapping (genuine
-     network failure in this sandbox, not simulated).
-   - **NOT tested: actual transcription accuracy** (needs Hugging Face
-     access this sandbox doesn't have).
-2. **`speech/listening_session.py`:**
-   - Normal flow (silence → speech → silence) — PASS.
-   - No-speech initial timeout — PASS.
-   - Continuous-speech max-duration safety cap — PASS.
-   - Post-finish idempotency — PASS.
-   - Silence threshold sanity-checked against real speech audio RMS values — PASS.
-3. **`voice/service.py` (rewritten):**
-   - `VoiceActivationService` constructs successfully despite transcriber
-     load failure (`self._transcriber is None`) — PASS.
-   - Wake word detection still fires correctly end-to-end through the full
-     service despite transcriber being unavailable (real audio, score
-     0.9999) — PASS.
-   - `_finish_listening_session()` correctly falls back to an empty
-     transcript when the transcriber is unavailable — PASS.
-4. **Full `main.py` end-to-end:** ran as a real subprocess; confirmed the
-   full startup sequence (wake word model load → transcriber load attempt
-   → graceful failure → mic start attempt → graceful failure → app
-   continues running) all logs correctly and the app doesn't crash.
-5. **`app/transcript_bridge.py`:** directly tested cross-thread signal
-   delivery (emit from a background thread, receive on the Qt main thread)
-   for both the `transcribed` and `no_speech_detected` signals — PASS.
-6. All test artifacts (`.iris_data/`, `__pycache__/`, cloned test-fixture
-   repos) cleaned up afterward.
+1. **`config/schema.py` / `config/default_config.yaml`:** loaded the YAML
+   through `AppSettings` directly — validates cleanly, `llm.*` fields
+   populate with the expected defaults — PASS.
+2. **`llm/generator.py` / `main.py` import wiring:** confirmed the
+   `try/except ImportError` path fires correctly with `llama-cpp-python`
+   genuinely not installed in this sandbox (not simulated) — app logs the
+   warning and continues rather than crashing.
+3. **Full `main.py` end-to-end (offscreen Qt, real subprocess-equivalent
+   run):** app starts, both voice and LLM dependencies genuinely missing
+   in this sandbox → both warnings logged, window constructs, no crash.
+4. **Debug text input → no-LLM fallback path:** emitted
+   `debug_text_submitted` programmatically with `llm_generator is None`,
+   confirmed `on_transcribed()` shows the fallback message in
+   `MainWindow`'s response area and Aura returns to IDLE without error —
+   PASS.
+5. **NOT tested: actual generation** (needs Hugging Face Hub access this
+   sandbox doesn't have, same limitation as Milestone 3's Whisper).
+6. All test artifacts cleaned up afterward.
 
 ## Current project status
 
-Milestone 3 is code-complete and as thoroughly tested as this sandbox
-allows — every piece that could be verified offline or against
-GitHub-hosted resources was verified for real, not assumed. The one
-genuine gap is real transcription accuracy, which needs Hugging Face
-access this sandbox doesn't have.
+Milestone 4 is code-complete and tested as thoroughly as this sandbox
+allows — the full pipeline wiring, failure-isolation paths, and config
+validation were all verified for real. The one genuine gap is actual
+generation (download, load, quality, latency), which needs the real
+target machine's Hugging Face access.
 
 ## Next milestone
 
-**Post-Milestone-3 addendum (2026-07-10):** Added a debug text input to
-`app/main_window.py`, gated behind `debug.enabled` in config (default
-`True`). Lets you type a command instead of speaking it — drives the exact
-same `on_wake_word_detected()` → `on_transcribed()` handlers real voice
-input uses, verified via direct widget tests and a full end-to-end run
-confirming Aura transitions LISTENING → THINKING → IDLE identically either
-way. This is a developer aid only, explicitly not part of Iris's intended
-end-user UX (see `docs/DECISIONS.md`) — remember to disable/remove it once
-real UX lands.
-
-
-
-**Milestone 4 — Local LLM Integration**, via llama.cpp. See
-`docs/ROADMAP.md` for scope and `docs/TODO.md` for specific next actions,
-including picking a model/quantization appropriate for the documented RTX
-3070 Ti (8GB VRAM) target and wiring the actual response generation into
-the `on_transcribed()` handler in `main.py` where the `TODO (Milestone 4)`
-comment currently sits.
+**Milestone 5 — Screen Capture + Vision**, via MSS + an ONNX Runtime
+vision model. See `docs/ROADMAP.md` for scope and `docs/TODO.md` for
+specific next actions, including deciding how vision output folds into
+the LLM prompt built for `llm/generator.py`.
 
 ## Ready-to-copy prompt for the next session
 
@@ -210,23 +178,25 @@ Before writing any code:
 2. Read every file inside /docs
 3. Understand the current project state
 
-Milestone 3 (speech-to-text) is code-complete but has an unverified gap:
-real transcription accuracy was not testable in the previous session's dev
-sandbox (no Hugging Face Hub access). Before starting Milestone 4, please:
-  1. Run `pip install -e ".[speech]"` and `python main.py` on this machine
-  2. Say "Hey Jarvis" followed by a short command (e.g. "what time is it")
-  3. Confirm the console logs a reasonable transcription of what was said
-  4. Also check startup time feels acceptable on this laptop's hardware
-     (Quadro M3000M / i7-6820HQ) — both the wake word and Whisper models
-     load eagerly at startup
-  5. Report back what you observed before we proceed
+Milestone 4 (local LLM integration) is code-complete but has an unverified
+gap: real generation was not testable in the previous session's dev
+sandbox (no Hugging Face Hub access). Before starting Milestone 5, please:
+  1. Run `pip install -e ".[speech,llm]"` and `python main.py` on this machine
+  2. Say "Hey Jarvis" (or use the debug text input) followed by a short
+     question (e.g. "what's 12 times 7")
+  3. Confirm a reasonable response appears in the window and console
+     within a few seconds
+  4. Note the model download time, load time, and rough response latency
+  5. Report back what you observed before we proceed — including whether
+     the default small model (Qwen2.5-1.5B) feels worth upgrading now
+     that we can see real headroom on this hardware
 
-Once that's confirmed, start Milestone 4 — Local LLM Integration, as
+Once that's confirmed, start Milestone 5 — Screen Capture + Vision, as
 scoped in docs/ROADMAP.md and docs/TODO.md.
 
 Work incrementally, in small parts (not all at once — confirm progress
 with me between parts). Do not begin implementing anything beyond
-Milestone 4's scope. End the session by updating HANDOFF.md and
+Milestone 5's scope. End the session by updating HANDOFF.md and
 docs/TODO.md, and only docs/ROADMAP.md / docs/ARCHITECTURE.md /
 docs/DECISIONS.md / README.md if something actually changed.
 ```

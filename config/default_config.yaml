@@ -38,5 +38,17 @@ speech:
   initial_timeout_seconds: 3.0
   max_duration_seconds: 10.0
 
+llm:
+  repo_id: Qwen/Qwen2.5-0.5B-Instruct-GGUF  # small model for fast dev-machine iteration
+  filename: qwen2.5-0.5b-instruct-q4_k_m.gguf
+  local_model_path: null  # set to a .gguf path to bypass the Hub download entirely
+  n_ctx: 4096
+  n_gpu_layers: -1  # -1 = offload all layers to GPU
+  temperature: 0.7
+  max_tokens: 512
+  system_prompt: >-
+    You are Iris, a concise local AI desktop copilot. Keep answers short
+    and to the point unless the user asks for more detail.
+
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

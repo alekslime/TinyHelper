@@ -117,6 +117,50 @@ class SpeechSettings(BaseModel):
     )
 
 
+class LLMSettings(BaseModel):
+    """Local LLM (llama.cpp via llama-cpp-python) settings.
+
+    Weights are fetched from Hugging Face Hub via `repo_id`/`filename` on
+    first use and cached locally, same download-once pattern as
+    `SpeechSettings.model_size` — see `llm/engine.py` and
+    `docs/DECISIONS.md`. Set `local_model_path` to bypass the Hub entirely
+    and load a `.gguf` file directly (e.g. a manually-downloaded larger
+    model for the RTX 3070 Ti target).
+    """
+
+    repo_id: str = Field(
+        default="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        description="Hugging Face repo to pull GGUF weights from, if local_model_path is unset.",
+    )
+    filename: str = Field(
+        default="qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        description="GGUF filename within repo_id to download.",
+    )
+    local_model_path: str | None = Field(
+        default=None,
+        description="Path to a local .gguf file. Overrides repo_id/filename when set.",
+    )
+    n_ctx: int = Field(default=4096, ge=512, description="Context window size, in tokens.")
+    n_gpu_layers: int = Field(
+        default=-1,
+        description=(
+            "Number of model layers to offload to GPU. -1 = all layers "
+            "(recommended when VRAM allows)."
+        ),
+    )
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature.")
+    max_tokens: int = Field(
+        default=512, ge=1, description="Maximum tokens to generate per response."
+    )
+    system_prompt: str = Field(
+        default=(
+            "You are Iris, a concise local AI desktop copilot. Keep answers short "
+            "and to the point unless the user asks for more detail."
+        ),
+        description="System prompt prepended to every generation call.",
+    )
+
+
 class DebugSettings(BaseModel):
     """Developer-only debug aids. None of this is part of Iris's intended
     end-user UX (which uses Aura + system tray, no visible windows or chat
@@ -147,4 +191,5 @@ class AppSettings(BaseModel):
     aura: AuraSettings = Field(default_factory=AuraSettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     speech: SpeechSettings = Field(default_factory=SpeechSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)

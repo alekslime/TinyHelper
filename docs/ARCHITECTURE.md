@@ -117,7 +117,23 @@ thread for transcription — never the audio callback thread — and the
 result reaches Qt's main thread via `app/transcript_bridge.py`, the same
 signal-bridge pattern as wake word detections.
 
-### Data flow (current, as of Milestone 3)
+### LLM module structure (Milestone 4)
+
+`llm/` follows the same single-responsibility pattern as `voice/`/`speech/`:
+
+- `llm/generator.py` — `LLMGenerator`: wraps a llama.cpp `Llama` instance
+  (via `llama-cpp-python`) for single-turn prompt/response. Knows nothing
+  about transcripts, Aura, or threading — takes text in, returns text out.
+
+`main.py` hands each transcript to `LLMGenerator.generate()` on a
+dedicated worker thread (never the audio callback or Qt main thread — see
+`docs/DECISIONS.md`), with the result delivered back to the main thread
+via `app/llm_response_bridge.py`'s `LLMResponseBridge`, the same
+signal-bridge pattern used for wake word detections and transcripts.
+There is no conversation memory yet (Milestone 9) — each call is
+independent, seeded only with a system prompt.
+
+### Data flow (current, as of Milestone 4)
 
 ```
 Wake word detected (voice/wake_word.py)
@@ -135,14 +151,20 @@ Transcribed on a background thread (speech/transcriber.py)
 Aura → THINKING (via app/transcript_bridge.py)
         │
         ▼
-[Milestone 4: LLM reasons over the transcript — not yet implemented]
+LLM generates a response on a background thread (llm/generator.py)
+        │
+        ▼
+Response shown in the placeholder window (via app/llm_response_bridge.py)
         │
         ▼
 Aura → IDLE
+        │
+        ▼
+[Milestone 5: vision/screen context feeds into the prompt — not yet implemented]
 ```
 
-Once Milestones 4-8 land, this extends to: LLM reasoning over the
-transcript (+ screen context from Milestone 5's vision capture) →
-voice response (Milestone 8) + optional visual guidance (Milestone 7) →
-back to IDLE. Update this diagram as each stage is implemented.
+Once Milestones 5-8 land, this extends to: screen context (Milestone 5's
+vision capture) folded into the LLM prompt → voice response (Milestone 8)
++ optional visual guidance (Milestone 7) → back to IDLE. Update this
+diagram as each stage is implemented.
 

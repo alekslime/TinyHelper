@@ -251,3 +251,70 @@ debug panel deliberately violates that for development convenience — the
 config flag makes it easy to turn off (or the whole panel easy to delete)
 once real end-user UX exists, and makes clear in code and docs that this
 was never meant to be the shipped experience.
+
+---
+
+## 2026-07-10 — LLM loaded via `Llama.from_pretrained`, same download-and-cache pattern as Whisper
+
+**Decision:** `llm/generator.py`'s `LLMGenerator` downloads its GGUF model
+from Hugging Face Hub via `llama_cpp.Llama.from_pretrained(repo_id,
+filename, ...)` by default, caching it locally after the first run — same
+one-time-setup-download pattern as `speech/transcriber.py`'s Faster-Whisper
+model. `config.yaml`'s `llm.model_path` can override this with a path to
+an already-downloaded local `.gguf` file instead, for swapping between
+models on disk without touching config defaults.
+
+**Why:** Consistency with the existing speech-to-text pattern, and it
+means picking a different/better model later is a one-line config change
+in either direction (repo_id/filename, or a local path), not a code
+change. Requires `huggingface_hub` as an added dependency in the `llm`
+extras group.
+
+---
+
+## 2026-07-10 — Default model picked for "small and working," not final quality
+
+**Decision:** Milestone 4 ships with `bartowski/Qwen2.5-1.5B-Instruct-GGUF`
+(`Q4_K_M` quantization, ~1GB) as the default `llm.repo_id`/`llm.filename`.
+
+**Why:** The immediate goal was getting the full wake-word → transcribe →
+generate → display pipeline working end-to-end, not picking the best
+model the target 8GB-VRAM RTX 3070 Ti could run — a 1.5B model comfortably
+fits on both the 3070 Ti and the weaker dev laptop, downloads quickly, and
+is enough to prove the pipeline. Response quality was explicitly
+deprioritized for this milestone; swapping to a larger/better model once
+real-hardware testing shows available headroom is a one-line config
+change (see the `from_pretrained` decision above), not a code change.
+
+---
+
+## 2026-07-10 — LLM generation runs on a dedicated worker thread, same as transcription
+
+**Decision:** `main.py`'s `on_transcribed()` hands the transcript to a new
+`threading.Thread` calling `LLMGenerator.generate()`, rather than calling
+it directly. The result (or error) reaches the Qt main thread via
+`app/llm_response_bridge.py`'s `LLMResponseBridge`, the same signal-bridge
+pattern as `WakeWordBridge`/`TranscriptBridge`.
+
+**Why:** Generation can take anywhere from under a second to several
+seconds depending on hardware and model size — blocking the Qt main
+thread for that long would freeze the (currently placeholder) UI and any
+future Aura rendering. Aura stays in THINKING for the duration and moves
+to IDLE (or ERROR, on failure) only once the bridge delivers a result.
+
+---
+
+## 2026-07-10 — LLM load/dependency failure degrades gracefully, doesn't crash the app
+
+**Decision:** `main.py` imports `llm.generator` inside a
+`try/except ImportError` (same pattern as `voice.service`), and separately
+catches `RuntimeError` from `LLMGenerator`'s constructor (model load
+failure). Either way, `llm_generator` is left `None` and `on_transcribed()`
+shows a fallback message in the window instead of attempting generation.
+
+**Why:** Consistent with the project's established failure-isolation
+philosophy (see the Milestone 3 entry on transcriber load failure not
+disabling wake word detection): a missing extra or a failed model
+download/load should degrade the specific feature it affects, not take
+down the whole app. Voice input still works and gets logged even with no
+LLM available.

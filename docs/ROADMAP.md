@@ -29,11 +29,11 @@ update it as milestones complete or priorities shift.
 - [x] Capture audio after wake word, transcribe locally
 - [x] Handle silence detection / end-of-utterance
 
-## Milestone 4 — Local LLM Integration (planned)
+## Milestone 4 — Local LLM Integration ✅ COMPLETE
 
-- [ ] Integrate llama.cpp via llama-cpp-python
-- [ ] Model selection appropriate for 8GB VRAM (RTX 3070 Ti)
-- [ ] Basic prompt/response loop (text only, no vision yet)
+- [x] Integrate llama.cpp via llama-cpp-python
+- [x] Model selection appropriate for 8GB VRAM (RTX 3070 Ti)
+- [x] Basic prompt/response loop (text only, no vision yet)
 
 ## Milestone 5 — Screen Capture + Vision (planned)
 

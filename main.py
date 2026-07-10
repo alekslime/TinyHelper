@@ -6,7 +6,9 @@ Responsible only for wiring things together:
     3. Construct the (placeholder, no-op) Aura controller.
     4. Construct voice activation (microphone + wake word detection +
        speech-to-text) and bridge its events onto the Qt main thread.
-    5. Launch the Qt application and a minimal window.
+    5. Construct the local LLM engine and bridge its results onto the Qt
+       main thread.
+    6. Launch the Qt application and a minimal window.
 
 No feature logic belongs here — this file should stay small forever.
 """
@@ -15,9 +17,11 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 
 from PySide6.QtWidgets import QApplication
 
+from app.llm_bridge import LLMResponseBridge
 from app.main_window import MainWindow
 from app.transcript_bridge import TranscriptBridge
 from app.wake_word_bridge import WakeWordBridge
@@ -41,6 +45,18 @@ except ImportError:
     VoiceActivationService = None  # type: ignore[assignment,misc]
     _VOICE_AVAILABLE = False
 
+# `llm.engine` depends on the optional "llm" extra (llama-cpp-python) — see
+# pyproject.toml and docs/DECISIONS.md. Same defensive-import treatment as
+# voice, above — Iris still launches without it, just without generated
+# responses.
+try:
+    from llm.engine import LLMEngine
+
+    _LLM_AVAILABLE = True
+except ImportError:
+    LLMEngine = None  # type: ignore[assignment,misc]
+    _LLM_AVAILABLE = False
+
 
 def main() -> int:
     settings = get_settings()
@@ -56,24 +72,86 @@ def main() -> int:
     aura.start()
 
     # Bridges: audio/worker threads -> Qt main thread. See
-    # app/wake_word_bridge.py and app/transcript_bridge.py.
+    # app/wake_word_bridge.py, app/transcript_bridge.py, and
+    # app/llm_bridge.py.
     wake_word_bridge = WakeWordBridge()
     transcript_bridge = TranscriptBridge()
+    llm_bridge = LLMResponseBridge()
+
+    # Loaded eagerly (like the wake word / Whisper models) so the first
+    # real utterance isn't delayed by a cold-start model load. Failure here
+    # is NOT fatal to the whole app — same graceful-degradation pattern as
+    # VoiceActivationService's transcriber load in voice/service.py.
+    llm_engine = None
+    if _LLM_AVAILABLE:
+        try:
+            llm_engine = LLMEngine(
+                repo_id=settings.llm.repo_id,
+                filename=settings.llm.filename,
+                local_model_path=settings.llm.local_model_path,
+                n_ctx=settings.llm.n_ctx,
+                n_gpu_layers=settings.llm.n_gpu_layers,
+                system_prompt=settings.llm.system_prompt,
+            )
+        except RuntimeError:
+            logger.exception("Could not load the LLM — continuing without generated responses.")
+            llm_engine = None
+    else:
+        logger.warning(
+            "LLM dependencies not installed (pip install -e '.[llm]') — "
+            "continuing without generated responses this session."
+        )
 
     def on_wake_word_detected(model_name: str, score: float) -> None:
         # Runs on the main thread (Qt queues the signal delivery for us).
         logger.info("Wake word '%s' detected (score=%.3f) — Aura -> LISTENING", model_name, score)
         aura.set_state(AuraState.LISTENING)
 
+    def _generate_worker(text: str) -> None:
+        # Runs on a dedicated worker thread — never the audio callback
+        # thread or the Qt main thread, same reasoning as transcription
+        # (see docs/DECISIONS.md). Delivers its result back via llm_bridge.
+        assert llm_engine is not None  # only started when it loaded successfully
+        try:
+            response = llm_engine.generate(
+                text,
+                max_tokens=settings.llm.max_tokens,
+                temperature=settings.llm.temperature,
+            )
+            if response:
+                llm_bridge.report_response(response)
+            else:
+                llm_bridge.report_failure("LLM returned an empty response.")
+        except Exception as exc:
+            logger.exception("LLM generation failed.")
+            llm_bridge.report_failure(str(exc))
+
     def on_transcribed(text: str) -> None:
-        # Runs on the main thread. No LLM integration yet (Milestone 4) —
-        # for now we just log the transcript and briefly show THINKING
-        # before returning to IDLE.
+        # Runs on the main thread. Keeps Aura in THINKING while the LLM
+        # generates a response on a worker thread; on_llm_response /
+        # on_llm_failed bring it back to IDLE (or ERROR) once that's done.
         logger.info('Transcribed: "%s" — Aura -> THINKING', text)
         aura.set_state(AuraState.THINKING)
-        # TODO (Milestone 4): keep THINKING while awaiting an LLM response
-        # instead of immediately returning to IDLE.
+
+        if llm_engine is None:
+            logger.warning("No LLM available — skipping generation.")
+            window.show_response("(No LLM available this session — see logs.)")
+            aura.set_state(AuraState.IDLE)
+            return
+
+        threading.Thread(target=_generate_worker, args=(text,), daemon=True).start()
+
+    def on_llm_response(text: str) -> None:
+        # Runs on the main thread.
+        logger.info('LLM response ready (%d chars) — Aura -> IDLE', len(text))
+        window.show_response(text)
         aura.set_state(AuraState.IDLE)
+
+    def on_llm_failed(message: str) -> None:
+        # Runs on the main thread.
+        logger.error("LLM generation failed: %s", message)
+        window.show_response(f"(LLM error — see logs: {message})")
+        aura.set_state(AuraState.ERROR)
 
     def on_no_speech_detected() -> None:
         # Runs on the main thread. Wake word fired but nothing was said
@@ -84,6 +162,8 @@ def main() -> int:
     wake_word_bridge.detected.connect(on_wake_word_detected)
     transcript_bridge.transcribed.connect(on_transcribed)
     transcript_bridge.no_speech_detected.connect(on_no_speech_detected)
+    llm_bridge.response_ready.connect(on_llm_response)
+    llm_bridge.generation_failed.connect(on_llm_failed)
 
     voice_service = None
     if _VOICE_AVAILABLE:
@@ -112,9 +192,8 @@ def main() -> int:
     def on_debug_text_submitted(text: str) -> None:
         # Drives the exact same handling path real voice input would:
         # a synthetic "wake word" event, then the typed text as if it were
-        # the transcription result. This lets the rest of the pipeline
-        # (and, from Milestone 4 onward, the LLM) be tested without
-        # needing to speak.
+        # the transcription result. Now also exercises the LLM the same
+        # way real voice input would.
         logger.info('Debug text input treated as a voice command: "%s"', text)
         on_wake_word_detected("debug_text_input", 1.0)
         on_transcribed(text)

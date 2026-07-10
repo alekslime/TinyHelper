@@ -9,7 +9,7 @@ it with local models, and guides you visually and by voice.
 
 ## Status
 
-🚧 Early development. Milestone 3 (speech-to-text) complete. See
+🚧 Early development. Milestone 4 (local LLM integration) complete. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/TODO.md`](docs/TODO.md) for
 what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full current
 state for anyone (human or AI) picking up development.
@@ -55,9 +55,9 @@ python main.py
 ```
 
 Say "Hey Jarvis" — Aura should transition through LISTENING (wake word
-heard) → THINKING (your speech was transcribed and logged) → back to IDLE.
-Check the console log for the recognized text. (No LLM response yet —
-that's Milestone 4.)
+heard) → THINKING (your speech is transcribed, then a response is
+generated) → back to IDLE. The response appears in the placeholder
+window and is logged to the console.
 
 **Testing without speaking:** the placeholder window has a debug text
 input (on by default during development — see `debug.enabled` in config)
@@ -65,8 +65,21 @@ that simulates a full voice command. Type something and hit Enter/Send —
 it drives Aura through the exact same LISTENING → THINKING → IDLE sequence
 real voice input would, no microphone or speaking required.
 
-Other heavy dependencies (LLM, vision) are declared as optional extras too
-and will be needed as those milestones are built:
+To also enable local LLM responses (default model is a small ~1GB
+`Qwen2.5-1.5B-Instruct` GGUF, downloaded and cached on first use — see
+`config.yaml`'s `llm:` section to point at a different model):
+
+```bash
+pip install -e ".[speech,llm]"
+python main.py
+```
+
+Without the `llm` extra installed, Iris still runs fine — voice/transcript
+handling works as before, and the response window just shows a
+"no LLM configured" placeholder instead of a generated reply.
+
+Other heavy dependencies (vision) are declared as optional extras too
+and will be needed once that milestone is built:
 
 ```bash
 pip install -e ".[speech,llm,vision,windows,dev]"

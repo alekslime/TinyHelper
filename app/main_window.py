@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -40,7 +41,7 @@ class MainWindow(QMainWindow):
     def __init__(self, app_name: str, app_version: str, debug_enabled: bool = False) -> None:
         super().__init__()
         self.setWindowTitle(f"{app_name} v{app_version}")
-        self.resize(480, 240 if not debug_enabled else 320)
+        self.resize(480, 360 if not debug_enabled else 440)
 
         central = QWidget(self)
         layout = QVBoxLayout(central)
@@ -53,11 +54,30 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(status_label)
 
+        layout.addWidget(QLabel("Last response:", self))
+        self._response_view = QTextEdit(self)
+        self._response_view.setReadOnly(True)
+        self._response_view.setPlaceholderText(
+            "(Nothing yet — say the wake word and a command, or use the debug "
+            "input below, once an LLM is configured.)"
+        )
+        self._response_view.setFixedHeight(100)
+        layout.addWidget(self._response_view)
+
         if debug_enabled:
             layout.addWidget(self._build_debug_panel())
 
         self.setCentralWidget(central)
         logger.debug("MainWindow constructed (debug_enabled=%s).", debug_enabled)
+
+    def show_response(self, text: str) -> None:
+        """Display the latest LLM response.
+
+        Text-only for now (Milestone 4) — voice output lands in Milestone 8,
+        at which point this becomes a supplementary transcript rather than
+        the only way to see a response.
+        """
+        self._response_view.setPlainText(text)
 
     def _build_debug_panel(self) -> QWidget:
         """Text input that simulates a full voice command turn (wake word
