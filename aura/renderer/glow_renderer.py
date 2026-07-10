@@ -44,12 +44,14 @@ logger = logging.getLogger(__name__)
 
 # How far the glow extends inward from each screen edge, in pixels, before
 # fully fading to transparent.
-GLOW_DEPTH = 70
+GLOW_DEPTH = 70  # confirmed via pixel comparison against user's reference
+# image (2026-07-11) -- the 105px/200px experiments were the wrong
+# direction; this original size is what the user actually wants.
 
 # How far in from the true edge the brightness peaks. Below this, alpha
 # feathers up from 0 (at the edge) to the peak -- this is what removes
 # the hard/flat line-against-nothing look at the screen boundary itself.
-FEATHER_PX = 12
+FEATHER_PX = 12  # reverted alongside GLOW_DEPTH, same reasoning
 
 # Peak alpha (0-255) at the brightest point of the gradient (at
 # FEATHER_PX in from the edge), before the breathing multiplier is

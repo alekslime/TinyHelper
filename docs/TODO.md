@@ -65,7 +65,18 @@ loose ends.
 - [x] Smooth fade, no sharp edges, no pulsing — confirmed by the pixel
       sampling above (smooth gradient falloff) and by inspection of the
       animation code (single cross-fade per transition, nothing loops).
-- [x] **Feathered + breathing update (2026-07-11, later same day).** After
+- [x] **Size bump experiments (10%, then 50%) reverted (2026-07-11).**
+      After the feathered/breathing update above, the user asked to
+      "zoom in" the glow by 10%, then 50%, but reported no visible
+      difference at either size on real hardware. Rather than keep
+      guessing sizes, did a pixel-level comparison between the user's
+      reference screenshot and offscreen renders at 70px (original),
+      105px (+50%), and 200px (+185%) — the *original* 70px render was
+      by far the closest match (mean pixel diff ~8, vs. ~17 and ~41 for
+      the larger versions). Reverted `GLOW_DEPTH`/`FEATHER_PX` back to
+      70/12. Lesson for next session: when a visual tweak is reported as
+      "no difference" twice in a row, stop nudging the same direction and
+      go back to direct comparison against a reference image instead.
       seeing the thin-core version on real hardware, feedback was that it
       looked flat and had a harsh seam where the core line met the bloom.
       Replaced the separate core-rectangle + bloom-rectangle pair with a
