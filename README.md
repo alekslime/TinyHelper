@@ -59,6 +59,12 @@ heard) → THINKING (your speech was transcribed and logged) → back to IDLE.
 Check the console log for the recognized text. (No LLM response yet —
 that's Milestone 4.)
 
+**Testing without speaking:** the placeholder window has a debug text
+input (on by default during development — see `debug.enabled` in config)
+that simulates a full voice command. Type something and hit Enter/Send —
+it drives Aura through the exact same LISTENING → THINKING → IDLE sequence
+real voice input would, no microphone or speaking required.
+
 Other heavy dependencies (LLM, vision) are declared as optional extras too
 and will be needed as those milestones are built:
 

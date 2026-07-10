@@ -225,3 +225,29 @@ not core `dependencies`.
 upfront before the milestones that use them exist would slow down early
 development iteration and make it harder to isolate install issues to the
 specific feature being built.
+
+---
+
+## 2026-07-10 — A debug text input drives the same pipeline as real voice, gated behind config
+
+**Decision:** `app/main_window.py`'s `MainWindow` optionally shows a text
+input (behind `debug.enabled` in config, default `True` during early
+development). Submitting text emits a Qt signal that `main.py` wires to
+call the exact same `on_wake_word_detected()` / `on_transcribed()`
+handlers real voice input triggers — not a separate code path.
+
+**Why:** Testing voice input requires speaking out loud, which isn't
+practical during meetings or in shared spaces, and will matter even more
+once Milestone 4 adds an LLM to test prompts against. Routing debug text
+through the *same* handlers (rather than a parallel debug-only code path)
+means this is also a regression-testing aid — if debug text input produces
+different behavior than voice would, that's a real bug, not divergent
+behavior to reconcile separately.
+
+**Why gated behind config, not just always-on:** The project's UX
+philosophy explicitly rules out chat windows and visible app windows as
+part of Iris's real interaction model (Aura + system tray only). This
+debug panel deliberately violates that for development convenience — the
+config flag makes it easy to turn off (or the whole panel easy to delete)
+once real end-user UX exists, and makes clear in code and docs that this
+was never meant to be the shipped experience.

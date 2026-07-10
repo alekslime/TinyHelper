@@ -37,3 +37,6 @@ speech:
   end_silence_seconds: 1.0
   initial_timeout_seconds: 3.0
   max_duration_seconds: 10.0
+
+debug:
+  enabled: true  # developer aid only -- set to false to hide once real UX lands

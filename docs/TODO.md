@@ -23,6 +23,12 @@ loose ends.
 
 ## Loose ends / small items
 
+- [ ] Debug text input (`app/main_window.py`, gated by `debug.enabled`)
+      was added mid-Milestone-3 for testing convenience without needing to
+      speak. Remember to set `debug.enabled: false` (or remove the panel
+      entirely) once Milestone 10's real settings UI / end-user experience
+      lands — it's explicitly a dev aid, not part of Iris's intended UX.
+
 - [ ] Add `tests/` content — still empty, now genuinely overdue. `voice/`
       and `speech/` both have real, testable logic (wake word thresholds,
       cooldown behavior, silence detection state machine, audio format

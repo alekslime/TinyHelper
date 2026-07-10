@@ -102,8 +102,24 @@ def main() -> int:
             "continuing without wake word detection this session."
         )
 
-    window = MainWindow(app_name=settings.app_name, app_version=settings.version)
+    window = MainWindow(
+        app_name=settings.app_name,
+        app_version=settings.version,
+        debug_enabled=settings.debug.enabled,
+    )
     window.show()
+
+    def on_debug_text_submitted(text: str) -> None:
+        # Drives the exact same handling path real voice input would:
+        # a synthetic "wake word" event, then the typed text as if it were
+        # the transcription result. This lets the rest of the pipeline
+        # (and, from Milestone 4 onward, the LLM) be tested without
+        # needing to speak.
+        logger.info('Debug text input treated as a voice command: "%s"', text)
+        on_wake_word_detected("debug_text_input", 1.0)
+        on_transcribed(text)
+
+    window.debug_text_submitted.connect(on_debug_text_submitted)
 
     exit_code = app.exec()
 

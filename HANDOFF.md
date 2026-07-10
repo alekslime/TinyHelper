@@ -181,6 +181,18 @@ access this sandbox doesn't have.
 
 ## Next milestone
 
+**Post-Milestone-3 addendum (2026-07-10):** Added a debug text input to
+`app/main_window.py`, gated behind `debug.enabled` in config (default
+`True`). Lets you type a command instead of speaking it — drives the exact
+same `on_wake_word_detected()` → `on_transcribed()` handlers real voice
+input uses, verified via direct widget tests and a full end-to-end run
+confirming Aura transitions LISTENING → THINKING → IDLE identically either
+way. This is a developer aid only, explicitly not part of Iris's intended
+end-user UX (see `docs/DECISIONS.md`) — remember to disable/remove it once
+real UX lands.
+
+
+
 **Milestone 4 — Local LLM Integration**, via llama.cpp. See
 `docs/ROADMAP.md` for scope and `docs/TODO.md` for specific next actions,
 including picking a model/quantization appropriate for the documented RTX

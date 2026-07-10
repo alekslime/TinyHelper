@@ -117,6 +117,21 @@ class SpeechSettings(BaseModel):
     )
 
 
+class DebugSettings(BaseModel):
+    """Developer-only debug aids. None of this is part of Iris's intended
+    end-user UX (which uses Aura + system tray, no visible windows or chat
+    boxes) — it exists purely to make development/testing easier before
+    voice input is convenient to test with (e.g. during meetings, or
+    before a working microphone setup exists). Should default to disabled
+    once Iris has real end-user-facing UI.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Show developer debug aids (e.g. text input to simulate voice commands).",
+    )
+
+
 class AppSettings(BaseModel):
     """Top-level application settings.
 
@@ -132,3 +147,4 @@ class AppSettings(BaseModel):
     aura: AuraSettings = Field(default_factory=AuraSettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     speech: SpeechSettings = Field(default_factory=SpeechSettings)
+    debug: DebugSettings = Field(default_factory=DebugSettings)
