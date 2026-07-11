@@ -54,65 +54,67 @@ loose ends.
 ## Milestone 6 — Aura Rendering — COMPLETE (code + offscreen visual verification), pending real-display check
 
 - [x] Real ambient edge glow — `aura/renderer/glow_renderer.py`'s
-      `GlowAuraRenderer`. Verified for real in this sandbox: rendered
-      each `AuraState` offscreen to a PNG and confirmed via pixel
-      sampling that glow intensity peaks at corners/edges and fades to
-      fully transparent by screen center, with no visible seam between
-      edge bands.
+      `GlowAuraRenderer`.
 - [x] State-based color transitions — a 350ms `QVariantAnimation`
       cross-fade per `set_state()` call, verified the animation reaches
       the correct target color.
-- [x] Smooth fade, no sharp edges, no pulsing — confirmed by the pixel
-      sampling above (smooth gradient falloff) and by inspection of the
-      animation code (single cross-fade per transition, nothing loops).
-- [x] **Size bump experiments (10%, then 50%) reverted (2026-07-11).**
-      After the feathered/breathing update above, the user asked to
-      "zoom in" the glow by 10%, then 50%, but reported no visible
-      difference at either size on real hardware. Rather than keep
-      guessing sizes, did a pixel-level comparison between the user's
-      reference screenshot and offscreen renders at 70px (original),
-      105px (+50%), and 200px (+185%) — the *original* 70px render was
-      by far the closest match (mean pixel diff ~8, vs. ~17 and ~41 for
-      the larger versions). Reverted `GLOW_DEPTH`/`FEATHER_PX` back to
-      70/12. Lesson for next session: when a visual tweak is reported as
-      "no difference" twice in a row, stop nudging the same direction and
-      go back to direct comparison against a reference image instead.
-      seeing the thin-core version on real hardware, feedback was that it
-      looked flat and had a harsh seam where the core line met the bloom.
-      Replaced the separate core-rectangle + bloom-rectangle pair with a
-      single continuous multi-stop gradient per edge (feathers up from 0
-      at the true screen edge over `FEATHER_PX` = 12px, peaks, then
-      decays smoothly to 0 by `GLOW_DEPTH`) — removes the seam entirely.
-      Also added a slow, continuous "breathing" pulse: a `QTimer`-driven
-      sine wave (`BREATH_PERIOD_S` = 4.2s, oscillating peak alpha between
-      `BREATH_MIN`/`BREATH_MAX` = 0.72–1.0) so the border has a sense of
-      life instead of sitting at one flat brightness. This intentionally
-      revises the original "no pulsing" constraint from Milestone 6 —
-      see `docs/DECISIONS.md`. Verified offscreen: rendered the gradient
-      at multiple breath phases and a close-up corner crop to confirm no
-      visible seam and a believable dim→bright range. **Still needs a
-      real-hardware look** — breathing speed/amplitude and the feather
-      width were picked by eye, not tuned against a real display.
-      real hardware, the original wide (140px) soft-gradient wash read as
-      a hazy tint rather than a visible border, especially over bright
-      screen content. Replaced with a bias-light-strip look: a thin,
-      near-solid, saturation-boosted "core" line (`CORE_WIDTH` = 5px,
-      `CORE_ALPHA` = 235) right at the screen edge, plus a much shorter
-      bloom band (`GLOW_DEPTH` dropped from 140px to 70px) for soft
-      falloff instead of a room-filling haze. Added `_vivid()` to push
-      every state color to near-max saturation/value so the strip reads
-      as punchy neon rather than the flatter tones used elsewhere in the
-      app's palette. Re-verified offscreen (pixel-sampled each state) but
-      **not yet re-confirmed over real desktop content** — that's the
-      next real-hardware check.
-- [ ] **Never shown on a real display with the new style.** The original
-      wide-gradient version was confirmed working on real hardware
-      (glow visible, though thin/washed-out per feedback); the new
-      thin-core-line version above has only been verified offscreen in
-      this sandbox. Next session on real hardware should: run
-      `main.py`, confirm the border reads as a crisp, saturated line
-      hugging all four edges (not just top), and trigger a few state
-      changes to see the cross-fade live.
+- [x] Smooth fade, no sharp edges — see design history below.
+
+**Design history (in order), all same-day (2026-07-11), each round driven
+by direct user feedback on the previous one:**
+
+1. **v1 — wide soft gradient wash.** `GLOW_DEPTH` = 140px, a single
+   2-stop linear/radial gradient per edge/corner. Confirmed working on
+   real hardware, but read as a hazy tint rather than a border, especially
+   over bright screen content.
+2. **v2 — thin neon core + bloom.** Replaced with a thin, near-solid
+   "core" line (5px) plus a shorter bloom band (`GLOW_DEPTH` → 70px), and
+   a `_vivid()` HSV boost so state colors read as punchy neon. Fixed the
+   "hazy" complaint but introduced a visible seam where the core's inner
+   edge met the separately-drawn bloom, and read as flat/static.
+3. **v3 — single feathered gradient + breathing.** Merged core and bloom
+   into one continuous multi-stop gradient per edge (feathers up from 0
+   at the true edge over `FEATHER_PX` = 12px, peaks, decays smoothly to 0
+   by `GLOW_DEPTH`) — removed the seam. Added a `QTimer`-driven sine
+   "breathing" pulse (`BREATH_PERIOD_S` = 4.2s, alpha oscillating between
+   `BREATH_MIN`/`BREATH_MAX` = 0.72–1.0) so it doesn't sit at one flat
+   brightness. This intentionally revises Milestone 6's original
+   "no pulsing" constraint — see `docs/DECISIONS.md`.
+4. **Size experiments, reverted.** User asked to size the glow up 10%,
+   then 50%; reported no visible difference either time. Rather than keep
+   guessing, did a pixel-level comparison between the user's reference
+   screenshot and offscreen renders at 70/105/200px — 70px (the original
+   v3 size) was by far the closest match. Reverted to 70/12. **Lesson:**
+   when a tweak is reported as "no difference" twice running, stop
+   nudging the same direction and go back to direct comparison against a
+   reference image instead of guessing again.
+5. **v4 — real Gaussian blur (current).** User asked for an entirely
+   different technique, not another parameter tweak. Replaced the
+   hand-authored gradient-stack approach with an actual Gaussian blur:
+   paint a solid-color band (`SEED_BAND_PX` = 55px) along each edge, blur
+   it with `QGraphicsBlurEffect` (`BLUR_RADIUS_PX` = 90), cache the
+   result as a `QImage` (rebuilt only on resize), and re-tint that cached
+   shape to the current color/breath-brightness each frame (cheap —
+   `QPainter.CompositionMode_SourceIn`). This gives a genuine bell-curve
+   falloff with zero seams at corners (blur handles that for free)
+   instead of a manually tuned decay curve. Breathing pulse carried over
+   unchanged from v3.
+
+**Verification so far:** all of the above verified offscreen only —
+rendered each `AuraState`, pixel-sampled the falloff curve, and (for v4)
+confirmed no seam and a smooth Gaussian-like decay via direct pixel
+sampling at multiple x-offsets from the edge.
+
+- [ ] **Never confirmed live on a real display.** Every version above,
+      including the current Gaussian-blur one, has only been verified via
+      offscreen rendering (`QT_QPA_PLATFORM=offscreen`) and pixel
+      sampling — click-through behavior, always-on-top stacking, and how
+      the blur actually reads over real desktop content and at real
+      viewing distance are all unverified. Next session on real hardware
+      should: run `main.py`, confirm the blurred glow appears around all
+      four edges, trigger a few state changes to see the cross-fade and
+      breathing live, and confirm click-through still works (nothing
+      about the paint pipeline changed there, but worth re-checking).
 - [ ] **Single-monitor only.** `GlowAuraRenderer.initialize()` sizes the
       overlay to `QGuiApplication.primaryScreen()`'s geometry, not the
       combined virtual geometry of all monitors — on a multi-monitor
@@ -120,11 +122,16 @@ loose ends.
       fixing once real multi-monitor hardware is available to test
       against — `vision/capture.py`'s `ScreenCapture.list_monitors()`
       may be useful groundwork here.
-- [ ] `GLOW_DEPTH`, `CORE_WIDTH`, `CORE_ALPHA`, `GLOW_EDGE_ALPHA`, and
-      `TRANSITION_MS` in `glow_renderer.py` were picked by eye/reasoning,
-      not tuned against a real display — may still need adjustment once
-      seen for real (e.g. core width/alpha may want to differ by state,
-      or by how bright the underlying desktop content is).
+- [ ] `SEED_BAND_PX`, `BLUR_RADIUS_PX`, `PEAK_ALPHA`, `BREATH_PERIOD_S`,
+      `BREATH_MIN`/`MAX`, and `TRANSITION_MS` in `glow_renderer.py` were
+      all picked by eye/reasoning, not tuned against a real display — may
+      still need adjustment once seen for real.
+- [ ] **Blur mask rebuild cost on resize is unmeasured.** `_build_blurred_mask()`
+      renders a `QGraphicsScene` through a blur effect at full screen
+      resolution; took ~0.3s in this sandbox for 1920×1080 (see commit
+      notes), which is fine since it only runs once at startup and on
+      resize (which should be rare for a full-screen overlay), but hasn't
+      been measured on real target hardware.
 
 ## Loose ends / small items
 

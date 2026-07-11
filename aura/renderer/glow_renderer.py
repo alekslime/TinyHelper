@@ -1,26 +1,28 @@
-"""A real, visible `AuraRenderer`: a thin, saturated neon border that hugs
-the screen edges (bias-lighting style), color-coded per `AuraState`, with
-smooth cross-fade transitions between states and a slow, continuous
-"breathing" pulse so it doesn't read as flat/static.
+"""A real, visible `AuraRenderer`: a soft ambient glow around the screen
+edges, color-coded per `AuraState`, built from an actual Gaussian blur
+rather than hand-authored gradient stops, with smooth cross-fade
+transitions between states and a slow, continuous "breathing" pulse.
 
 Replaces `NullAuraRenderer` as Iris's default renderer (Milestone 6). Built
 as a frameless, click-through, always-on-top top-level widget painted with
-QPainter gradients rather than a literal custom GPU shader pipeline --
-see docs/DECISIONS.md for why this still satisfies the roadmap's "GPU-
-rendered ambient edge glow" goal without a much heavier OpenGL/QML
-dependency.
+QPainter/`QGraphicsBlurEffect` rather than a literal custom GPU shader
+pipeline -- see docs/DECISIONS.md for why this still satisfies the
+roadmap's "GPU-rendered ambient edge glow" goal without a much heavier
+OpenGL/QML dependency.
 
-Visual model: each edge is one continuous multi-stop gradient (not a
-separate "core" rectangle stacked on a separate "bloom" rectangle, which
-produced a visible seam) that feathers in from fully transparent at the
-true screen edge, up to peak brightness a short distance in, then decays
-smoothly back to transparent by `GLOW_DEPTH`. A slow sine-driven
-"breath" scales that peak brightness up and down continuously so the
-border has a sense of life instead of sitting at one flat opacity.
+Visual model (2026-07-11 rewrite, replacing the gradient-stack approach):
+a solid-color band is painted along each edge, then blurred with Qt's
+`QGraphicsBlurEffect` -- a real Gaussian blur, not a manually tuned
+multi-stop gradient. This is a genuinely different rendering technique
+from the previous version: no hand-picked falloff curve, no separate
+corner patches to avoid seams (blur handles corners for free), just "draw
+a shape, blur it." The blurred shape (a `QImage`) is cached and only
+rebuilt on resize; per-frame work is just re-tinting that cached shape to
+the current color/brightness, which is cheap.
 
 Design constraints from docs/ROADMAP.md, honored here:
     - State-based color transitions (idle/listening/thinking/waiting/error)
-    - Smooth fade in/out, no sharp/harsh edges (12px feather at the seam)
+    - Smooth fade in/out, no sharp/harsh edges (now a true Gaussian blur)
     - A slow, subtle continuous breathing pulse (not a sharp flashing
       pulse) -- intentionally revises the earlier "no pulsing" decision
       after real-hardware feedback that the static version looked flat;
@@ -34,29 +36,26 @@ import math
 import time
 
 from PySide6.QtCore import QEasingCurve, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QBrush, QColor, QGuiApplication, QLinearGradient, QPainter, QRadialGradient
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene, QWidget
 
 from aura.renderer.base import AuraRenderer
 from aura.states import DEFAULT_STATE_COLORS, AuraState
 
 logger = logging.getLogger(__name__)
 
-# How far the glow extends inward from each screen edge, in pixels, before
-# fully fading to transparent.
-GLOW_DEPTH = 70  # confirmed via pixel comparison against user's reference
-# image (2026-07-11) -- the 105px/200px experiments were the wrong
-# direction; this original size is what the user actually wants.
+# Width of the solid seed band painted along each edge before blurring.
+# This is the "shape" that then gets blurred into a glow -- not the final
+# visible width, which ends up considerably wider once blur spreads it.
+SEED_BAND_PX = 55
 
-# How far in from the true edge the brightness peaks. Below this, alpha
-# feathers up from 0 (at the edge) to the peak -- this is what removes
-# the hard/flat line-against-nothing look at the screen boundary itself.
-FEATHER_PX = 12  # reverted alongside GLOW_DEPTH, same reasoning
+# Qt blur radius (roughly, the blur's standard deviation in pixels). This
+# is what actually determines how far and how softly the glow spreads.
+BLUR_RADIUS_PX = 90
 
-# Peak alpha (0-255) at the brightest point of the gradient (at
-# FEATHER_PX in from the edge), before the breathing multiplier is
-# applied.
-PEAK_ALPHA = 225
+# Peak alpha (0-255) of the tint applied to the blurred shape, before the
+# breathing multiplier is applied.
+PEAK_ALPHA = 235
 
 # --- Breathing pulse: a slow, continuous sine wave scaling peak alpha up
 # and down so the border reads as alive rather than a flat static line.
@@ -81,6 +80,57 @@ def _vivid(color: QColor) -> QColor:
     return vivid
 
 
+def _build_blurred_mask(width: int, height: int) -> QImage:
+    """Paint a solid white band along all four edges and blur it with a
+    real Gaussian blur (`QGraphicsBlurEffect`). The result is a shape-only
+    mask (white, varying alpha) -- color is applied later, per frame, via
+    `_tint()`, so this expensive part only has to run once per size.
+    """
+    seed = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+    seed.fill(0)
+    painter = QPainter(seed)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(255, 255, 255, 255))
+    band = SEED_BAND_PX
+    painter.drawRect(0, 0, width, band)
+    painter.drawRect(0, height - band, width, band)
+    painter.drawRect(0, 0, band, height)
+    painter.drawRect(width - band, 0, band, height)
+    painter.end()
+
+    scene = QGraphicsScene()
+    item = QGraphicsPixmapItem(QPixmap.fromImage(seed))
+    effect = QGraphicsBlurEffect()
+    effect.setBlurRadius(BLUR_RADIUS_PX)
+    effect.setBlurHints(QGraphicsBlurEffect.BlurHint.QualityHint)
+    item.setGraphicsEffect(effect)
+    scene.addItem(item)
+    scene.setSceneRect(0, 0, width, height)
+
+    blurred = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+    blurred.fill(0)
+    result_painter = QPainter(blurred)
+    scene.render(result_painter, QRectF(0, 0, width, height), QRectF(0, 0, width, height))
+    result_painter.end()
+    return blurred
+
+
+def _tint(mask: QImage, color: QColor, alpha: int) -> QImage:
+    """Recolor a blurred white mask to `color` at `alpha`, keeping the
+    mask's own alpha shape. Cheap relative to `_build_blurred_mask` --
+    this is the only per-frame work.
+    """
+    tinted = QImage(mask)
+    painter = QPainter(tinted)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    tint_color = QColor(color)
+    tint_color.setAlpha(max(0, min(255, alpha)))
+    painter.fillRect(tinted.rect(), tint_color)
+    painter.end()
+    return tinted
+
+
 class _AuraOverlayWidget(QWidget):
     """The actual painted surface. Frameless, transparent, click-through,
     always-on-top -- so it sits over everything else on screen without
@@ -99,6 +149,8 @@ class _AuraOverlayWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._color = QColor(66, 133, 244)
         self._breath = 1.0  # current breathing multiplier, 0..1
+        self._mask: QImage | None = None  # cached blurred shape, rebuilt on resize
+        self._mask_size: tuple[int, int] | None = None
 
         self._breath_timer = QTimer(self)
         self._breath_timer.setInterval(int(1000 / BREATH_FPS))
@@ -121,59 +173,33 @@ class _AuraOverlayWidget(QWidget):
     def stop(self) -> None:
         self._breath_timer.stop()
 
+    def _ensure_mask(self) -> QImage | None:
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return None
+        if self._mask is None or self._mask_size != (w, h):
+            logger.debug("Rebuilding Aura blur mask for size %sx%s.", w, h)
+            self._mask = _build_blurred_mask(w, h)
+            self._mask_size = (w, h)
+        return self._mask
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming convention)
+        # Invalidate the cached mask; it'll be rebuilt lazily on next paint.
+        self._mask = None
+        self._mask_size = None
+        super().resizeEvent(event)
+
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming convention)
+        mask = self._ensure_mask()
+        if mask is None:
+            return
+
+        peak = int(PEAK_ALPHA * self._breath)
+        tinted = _tint(mask, self._color, peak)
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Additive blending: overlapping edge/corner gradients brighten
-        # together instead of one overwriting another, which is what makes
-        # the corners look like one continuous strip rather than four
-        # separate rectangles with visible seams.
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        w, h = self.width(), self.height()
-        depth = GLOW_DEPTH
-        peak = int(PEAK_ALPHA * self._breath)
-        feather_stop = FEATHER_PX / depth if depth else 0.0
-
-        def edge_color(alpha: int) -> QColor:
-            c = QColor(self._color)
-            c.setAlpha(max(0, min(255, alpha)))
-            return c
-
-        def apply_stops(gradient: QLinearGradient | QRadialGradient) -> None:
-            # One continuous curve per edge: transparent at the true
-            # screen edge, feathering up to peak brightness by
-            # FEATHER_PX in, then decaying smoothly back to transparent
-            # by `depth`. Using several intermediate stops (rather than
-            # a 2-stop linear ramp) rounds the decay so it reads as a
-            # soft glow instead of a harsh straight-line fade.
-            gradient.setColorAt(0.0, edge_color(0))
-            gradient.setColorAt(min(feather_stop, 0.99), edge_color(peak))
-            remaining = 1.0 - feather_stop
-            if remaining > 0:
-                gradient.setColorAt(feather_stop + remaining * 0.35, edge_color(int(peak * 0.55)))
-                gradient.setColorAt(feather_stop + remaining * 0.7, edge_color(int(peak * 0.18)))
-            gradient.setColorAt(1.0, edge_color(0))
-
-        edge_bands = [
-            (QRectF(0, 0, w, depth), QLinearGradient(0, 0, 0, depth)),  # top
-            (QRectF(0, h - depth, w, depth), QLinearGradient(0, h, 0, h - depth)),  # bottom
-            (QRectF(0, 0, depth, h), QLinearGradient(0, 0, depth, 0)),  # left
-            (QRectF(w - depth, 0, depth, h), QLinearGradient(w, 0, w - depth, 0)),  # right
-        ]
-        for rect, gradient in edge_bands:
-            apply_stops(gradient)
-            painter.fillRect(rect, gradient)
-
-        # Radial patches at each corner smooth the seam where two edge
-        # bands would otherwise meet at a visible right angle -- same
-        # feathered profile, just radial instead of linear.
-        for cx, cy in ((0, 0), (w, 0), (0, h), (w, h)):
-            radial = QRadialGradient(cx, cy, depth)
-            apply_stops(radial)
-            painter.fillRect(QRectF(cx - depth, cy - depth, depth * 2, depth * 2), QBrush(radial))
-
+        painter.drawImage(0, 0, tinted)
         painter.end()
 
 

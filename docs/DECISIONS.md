@@ -523,3 +523,70 @@ by evaluating the sine formula at several time offsets, not by watching
 it animate live (no real display in this sandbox). **Real-hardware
 check still needed** — breathing speed/amplitude may want retuning once
 seen for real.
+
+---
+
+## 2026-07-11 — Reverted glow size after pixel-comparing against the user's reference
+
+**Decision:** User asked to size the glow up 10%, then 50%, but reported
+no visible difference on real hardware either time. Instead of guessing a
+third size, took the user's own reference screenshot and did a pixel-level
+comparison (mean absolute RGB difference) against offscreen renders at
+70px (the pre-existing size), 105px (+50%), and 200px (+185%). The
+original 70px render was by far the closest match (~8 mean diff, vs. ~17
+and ~41 for the larger ones) — the size was never actually the problem,
+and further "zoom in" requests would have kept moving away from what the
+user wanted. Reverted `GLOW_DEPTH`/`FEATHER_PX` to 70/12.
+
+**Lesson carried into the next entry below:** when a tweak is reported as
+"no difference" more than once, stop nudging the same parameter in the
+same direction — go back to a direct, quantitative comparison against
+whatever reference the user has provided, rather than guessing again.
+
+---
+
+## 2026-07-11 — Replaced the gradient-stack technique with a real Gaussian blur
+
+**Decision:** After the size revert above, the user explicitly asked for
+a different rendering *technique*, not another parameter adjustment on
+the existing one ("try another entire design... this concept but another
+thing"). Replaced the hand-authored multi-stop-gradient approach (v1–v3
+in `docs/TODO.md`'s Milestone 6 history) with an actual Gaussian blur:
+
+1. Paint a solid-color band (`SEED_BAND_PX` = 55px) along all four edges
+   onto an offscreen `QImage`.
+2. Blur it with `QGraphicsBlurEffect` (`BLUR_RADIUS_PX` = 90) via a
+   `QGraphicsScene`/`QGraphicsPixmapItem`, rendered back into a `QImage`.
+3. Cache that blurred *shape* (`_build_blurred_mask()`) — it only depends
+   on widget size, so it's rebuilt on resize, not every frame.
+4. Each frame/breath-tick, re-tint the cached shape to the current
+   color and brightness via `QPainter.CompositionMode_SourceIn`
+   (`_tint()`) — cheap, since the expensive blur already happened once.
+
+**Why this counts as a different design, not just a bigger blur radius:**
+the previous versions all worked by hand-picking an alpha-vs-distance
+curve (linear, then multi-stop) and manually patching corners with radial
+gradients to avoid seams. A real blur has no such curve to hand-tune and
+no seam problem at corners in the first place — the falloff shape is
+whatever the blur kernel naturally produces. Verified via pixel sampling
+that the falloff is a smooth bell curve (rises from the edge to a peak
+around x≈20-30px, decays smoothly to background by x≈150-200px), with no
+seam artifacts, unlike any of the gradient-based versions.
+
+**No new dependency:** `QGraphicsBlurEffect` is part of Qt/PySide6, which
+is already a core (non-extra) dependency — unlike, say, doing the blur in
+Pillow, which is currently only in the `vision` optional-extra and would
+have made the base overlay (which must work with zero extras installed)
+depend on it.
+
+**Performance note:** building the blurred mask took ~0.3s for a
+1920×1080 image in this sandbox. That only happens once at startup and
+on resize (rare for a full-screen overlay), not per frame — per-frame
+work is just the cheap re-tint. Not yet measured on real target hardware.
+
+**Verification:** offscreen only, same limitation as every prior entry
+in this file — rendered each `AuraState`, pixel-sampled the falloff
+curve, and exercised a resize to confirm the mask cache invalidates and
+rebuilds at the new size without crashing. **Real-hardware check still
+needed**, including whether `BLUR_RADIUS_PX`/`SEED_BAND_PX` need retuning
+once seen at real size and viewing distance.
