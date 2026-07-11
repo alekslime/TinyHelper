@@ -46,12 +46,13 @@ logger = logging.getLogger(__name__)
 
 # Width of the solid seed band painted along each edge before blurring.
 # This is the "shape" that then gets blurred into a glow -- not the final
-# visible width, which ends up considerably wider once blur spreads it.
-SEED_BAND_PX = 55
+# visible width, which ends up wider once blur spreads it.
+SEED_BAND_PX = 18  # was 55; cut down, was eating too much of the screen
 
 # Qt blur radius (roughly, the blur's standard deviation in pixels). This
-# is what actually determines how far and how softly the glow spreads.
-BLUR_RADIUS_PX = 90
+# is what actually determines how far and how softly the glow spreads --
+# and was the main reason the glow reached so far inward before.
+BLUR_RADIUS_PX = 38  # was 90; cut down alongside SEED_BAND_PX
 
 # Peak alpha (0-255) of the tint applied to the blurred shape, before the
 # breathing multiplier is applied.

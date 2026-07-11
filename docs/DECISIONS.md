@@ -590,3 +590,42 @@ curve, and exercised a resize to confirm the mask cache invalidates and
 rebuilds at the new size without crashing. **Real-hardware check still
 needed**, including whether `BLUR_RADIUS_PX`/`SEED_BAND_PX` need retuning
 once seen at real size and viewing distance.
+
+---
+
+## 2026-07-11 — Auto-fallback to CPU when Faster-Whisper's CUDA runtime is broken
+
+**Decision:** First real-hardware log showed `Transcriber` loading
+successfully, then every `.transcribe()` call failing with `RuntimeError:
+Library cublas64_12.dll is not found or cannot be loaded`. `device="auto"`
+had detected the RTX 3070 Ti and picked CUDA, but the machine's CUDA/
+cuBLAS runtime wasn't actually loadable at inference time. The existing
+try/except around transcription (in `voice/service.py`) stopped this from
+crashing the app, but didn't stop it from failing identically on every
+subsequent utterance — the wake word would fire, listening would work,
+and transcription would silently fail forever.
+
+Added `_looks_like_cuda_runtime_failure()` (string-matches on
+cublas/cudnn/cuda/nvcuda in the exception message) and had
+`Transcriber.transcribe()` catch exactly that failure shape, reload the
+model with `device="cpu", compute_type="int8"`, and retry the same clip
+immediately — then remember (`self._fell_back_to_cpu`) to skip straight
+to CPU on all future calls rather than re-attempting the broken GPU path
+every time. Any other exception shape is re-raised unchanged, so it still
+surfaces exactly as before.
+
+**Why catch it here instead of at `WhisperModel.__init__`:** the failure
+doesn't happen at load time — `WhisperModel(...)` succeeds even though
+the CUDA path is broken, because ctranslate2 only touches the cuBLAS
+library on the first actual `.encode()` call inside `.transcribe()`. So
+this can only be caught where it actually happens, not proactively at
+construction.
+
+**Verification:** `tests/test_transcriber.py`, using a mocked
+`WhisperModel` — reproduces the literal error message from the user's
+log, confirms the second (CPU) attempt succeeds and returns the expected
+text, confirms the CPU reload only happens once (`assert_called_once_with`)
+even across two subsequent `.transcribe()` calls, and confirms unrelated
+exceptions (e.g. `ValueError`) are re-raised without triggering a
+pointless reload. **Not yet re-run on the actual machine that hit this**
+— that's the natural next real-hardware check.

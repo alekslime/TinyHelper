@@ -88,17 +88,22 @@ by direct user feedback on the previous one:**
    when a tweak is reported as "no difference" twice running, stop
    nudging the same direction and go back to direct comparison against a
    reference image instead of guessing again.
-5. **v4 — real Gaussian blur (current).** User asked for an entirely
+5. **v4 — real Gaussian blur.** User asked for an entirely
    different technique, not another parameter tweak. Replaced the
    hand-authored gradient-stack approach with an actual Gaussian blur:
-   paint a solid-color band (`SEED_BAND_PX` = 55px) along each edge, blur
-   it with `QGraphicsBlurEffect` (`BLUR_RADIUS_PX` = 90), cache the
-   result as a `QImage` (rebuilt only on resize), and re-tint that cached
-   shape to the current color/breath-brightness each frame (cheap —
-   `QPainter.CompositionMode_SourceIn`). This gives a genuine bell-curve
-   falloff with zero seams at corners (blur handles that for free)
-   instead of a manually tuned decay curve. Breathing pulse carried over
-   unchanged from v3.
+   paint a solid-color band along each edge, blur it with
+   `QGraphicsBlurEffect`, cache the result as a `QImage` (rebuilt only on
+   resize), and re-tint that cached shape to the current color/breath-
+   brightness each frame (cheap — `QPainter.CompositionMode_SourceIn`).
+   This gives a genuine bell-curve falloff with zero seams at corners
+   (blur handles that for free) instead of a manually tuned decay curve.
+   Breathing pulse carried over unchanged from v3. **Liked the technique
+   immediately**, but the first pass (`SEED_BAND_PX` = 55,
+   `BLUR_RADIUS_PX` = 90) reached ~150-200px inward — reported as "very
+   very thick... takes a lot of the screen's edges." Cut both roughly in
+   half (`SEED_BAND_PX` = 18, `BLUR_RADIUS_PX` = 38), which fades to
+   background by ~70-80px instead — same blur-based technique, just a
+   smaller version of it.
 
 **Verification so far:** all of the above verified offscreen only —
 rendered each `AuraState`, pixel-sampled the falloff curve, and (for v4)
@@ -135,6 +140,27 @@ sampling at multiple x-offsets from the edge.
 
 ## Loose ends / small items
 
+- [x] **Fixed: Whisper transcription crashed permanently on real hardware
+      with a CUDA/cuBLAS DLL error (2026-07-11).** First real-hardware run
+      (Windows, RTX 3070 Ti) showed `Transcriber` loading fine but every
+      `.transcribe()` call raising `RuntimeError: Library cublas64_12.dll
+      is not found or cannot be loaded` — `device="auto"` detected the GPU
+      and picked CUDA, but the actual CUDA/cuBLAS runtime wasn't loadable
+      (driver present, redistributables missing or the wrong major
+      version). The existing try/except in `voice/service.py` kept this
+      from crashing the app, but every wake word afterward would fail
+      the same way forever, silently. Fixed in `speech/transcriber.py`:
+      `Transcriber.transcribe()` now catches this specific failure shape
+      (`_looks_like_cuda_runtime_failure()`, matching on
+      cublas/cudnn/cuda/nvcuda in the error message), reloads the model
+      on CPU (`device="cpu", compute_type="int8"`), and retries — once,
+      permanently, not per-call. Other exceptions are re-raised unchanged
+      so unrelated failures still surface normally. Covered by
+      `tests/test_transcriber.py` (mocked `WhisperModel`, no real
+      download), including the literal error message from the log.
+      **Still needs a real-hardware re-run** to confirm the fallback
+      actually fires and recovers on the machine that hit this, not just
+      in the mocked test.
 - [ ] **Real LLM generation has NOT been verified end-to-end on real
       hardware yet** — same category of gap as Milestone 3's Whisper
       transcription. This sandbox has no Hugging Face Hub access, so
