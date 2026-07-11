@@ -629,3 +629,48 @@ even across two subsequent `.transcribe()` calls, and confirms unrelated
 exceptions (e.g. `ValueError`) are re-raised without triggering a
 pointless reload. **Not yet re-run on the actual machine that hit this**
 — that's the natural next real-hardware check.
+
+---
+
+## 2026-07-11 — Backfill missing keys into an existing user `config.yaml` instead of only ever writing it once
+
+**Decision:** Real-hardware check showed the user's `%APPDATA%/Iris/
+config/config.yaml` was only 17 lines — missing the entire `speech`,
+`llm`, `vision`, and `debug` sections, plus `voice.cooldown_seconds`.
+Root cause: `load_settings()` only wrote the user config file inside
+`if not USER_CONFIG_FILE.exists()`. That file was created by an early
+run of Iris, before those sections/fields existed in `config/schema.py`.
+Because the file's mere existence skipped the write branch on every
+later run, it stayed frozen at that old shape permanently, no matter how
+much the schema grew afterward.
+
+This didn't break runtime behavior — `load_settings()` deep-merges
+bundled defaults *under* the user file, so e.g. `vision.enabled` still
+correctly resolved to `False` even without a `vision:` key on disk. But
+it meant the user had no `vision:` section to actually edit when they
+wanted to turn it on, with no indication anything was missing.
+
+Added `_backfill_missing()`: recursively walks the bundled defaults and
+adds any key absent from the user's raw dict, at any nesting depth,
+without touching or reordering keys the user already has (including
+values that differ from the current default, e.g. a customized
+`detection_threshold`). `load_settings()` now calls this on every run
+(not just first run) when the user file already exists, and only
+rewrites the file if something was actually missing — so an up-to-date
+file is never needlessly rewritten.
+
+**Why not just always overwrite with `settings.model_dump()`:** that
+would silently discard any user customization that isn't itself a valid
+override of a *current* default field name — e.g. renamed/removed keys —
+and would reformat the whole file (losing edit history/diffs) on every
+single launch even when nothing changed. Backfill-only is a strict
+superset of "keep what the user has, add what's new."
+
+**Verification:** `tests/test_settings.py` — unit tests for
+`_backfill_missing` (new top-level section added, new nested field added
+while an existing sibling value is preserved untouched, no-op when
+nothing is missing) plus two `load_settings()` integration tests against
+real files under `tmp_path` (schema.py/paths.py patched out): one
+reproducing the exact bug (an old file missing `vision` entirely gains
+it, while a customized `aura.theme` survives), one confirming an
+up-to-date file is left byte-for-byte untouched. All pass.

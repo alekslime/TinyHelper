@@ -161,16 +161,25 @@ sampling at multiple x-offsets from the edge.
       **Still needs a real-hardware re-run** to confirm the fallback
       actually fires and recovers on the machine that hit this, not just
       in the mocked test.
-- [ ] **Real LLM generation has NOT been verified end-to-end on real
-      hardware yet** — same category of gap as Milestone 3's Whisper
-      transcription. This sandbox has no Hugging Face Hub access, so
-      `LLMEngine` could only be verified for its graceful-failure path
-      (dependencies missing / model load failure), not actual generation
-      quality, latency, or VRAM usage on the RTX 3070 Ti or the laptop.
-      Next session on real hardware should: `pip install -e ".[llm]"`,
-      run `main.py`, use the debug text input (or real voice) to ask a
-      question, and confirm a reasonable response appears in the window
-      and the console within a few seconds.
+- [ ] **Real LLM generation still not verified end-to-end on real
+      hardware.** First attempt (2026-07-11) hit a transient SSL handshake
+      timeout talking to Hugging Face Hub during `Llama.from_pretrained`'s
+      repo-listing call — not a code bug (a plain file download to the
+      same host succeeded seconds later in the same run), but
+      `Llama.from_pretrained` has to list every file in the repo before
+      downloading, which is a heavier/less patient Hub API call than a
+      direct file fetch. Added retry-with-backoff
+      (`LLMEngine._load_from_hub_with_retry`, `DOWNLOAD_RETRY_ATTEMPTS` = 3,
+      `DOWNLOAD_RETRY_BACKOFF_S` = 2.0) so one flaky connection doesn't
+      fail the whole app — covered by `tests/test_llm_engine.py` (fakes
+      `llama_cpp` since it's not installable in this sandbox; verifies
+      retry-then-succeed, give-up-after-max-attempts, no-retry-needed, and
+      local-path-bypasses-retry cases). **Still need an actual successful
+      end-to-end run** — retry logic is only proven against mocked
+      failures, not a real connection, and generation quality/latency/VRAM
+      usage on the RTX 3070 Ti is still completely unverified. Next
+      session: `pip install -e ".[llm]"`, run `main.py`, ask a question via
+      debug text input or voice, confirm a reasonable response appears.
 - [ ] The default model (`Qwen/Qwen2.5-0.5B-Instruct-GGUF`,
       Q4_K_M) was picked to get something small and fast working
       end-to-end, not for response quality — revisit once real hardware

@@ -13,6 +13,7 @@ Faster-Whisper model. See `docs/DECISIONS.md`.
 from __future__ import annotations
 
 import logging
+import time
 
 from llama_cpp import Llama
 
@@ -32,6 +33,16 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are Iris, a concise local AI desktop copilot. Keep answers short "
     "and to the point unless the user asks for more detail."
 )
+
+# `Llama.from_pretrained()` has to list every file in the repo (to glob-match
+# `filename`) before it can download anything -- a heavier Hub API call than
+# a direct file download, and one real-hardware run showed it can hit a
+# transient SSL handshake timeout even when the network is otherwise fine
+# (a plain file download to the same host succeeded seconds later in the
+# same run). Retried a few times with backoff rather than failing the whole
+# app on one flaky connection attempt. See docs/DECISIONS.md.
+DOWNLOAD_RETRY_ATTEMPTS = 3
+DOWNLOAD_RETRY_BACKOFF_S = 2.0
 
 
 class LLMEngine:
@@ -75,12 +86,8 @@ class LLMEngine:
                     n_ctx,
                     n_gpu_layers,
                 )
-                self._model = Llama.from_pretrained(
-                    repo_id=repo_id,
-                    filename=filename,
-                    n_ctx=n_ctx,
-                    n_gpu_layers=n_gpu_layers,
-                    verbose=False,
+                self._model = self._load_from_hub_with_retry(
+                    repo_id, filename, n_ctx, n_gpu_layers
                 )
         except Exception as exc:
             target = local_model_path or f"{repo_id}/{filename}"
@@ -91,6 +98,37 @@ class LLMEngine:
             ) from exc
 
         logger.info("LLM ready.")
+
+    def _load_from_hub_with_retry(
+        self, repo_id: str, filename: str, n_ctx: int, n_gpu_layers: int
+    ) -> Llama:
+        last_exc: Exception | None = None
+        for attempt in range(1, DOWNLOAD_RETRY_ATTEMPTS + 1):
+            try:
+                return Llama.from_pretrained(
+                    repo_id=repo_id,
+                    filename=filename,
+                    n_ctx=n_ctx,
+                    n_gpu_layers=n_gpu_layers,
+                    verbose=False,
+                )
+            except Exception as exc:  # noqa: BLE001 - deliberately broad, see retry note above
+                last_exc = exc
+                if attempt < DOWNLOAD_RETRY_ATTEMPTS:
+                    delay = DOWNLOAD_RETRY_BACKOFF_S * attempt
+                    logger.warning(
+                        "LLM download/load attempt %d/%d failed (%s) — "
+                        "retrying in %.0fs. This is usually a transient network "
+                        "hiccup talking to Hugging Face Hub, not a real problem "
+                        "with the model or your setup.",
+                        attempt,
+                        DOWNLOAD_RETRY_ATTEMPTS,
+                        exc,
+                        delay,
+                    )
+                    time.sleep(delay)
+        assert last_exc is not None  # loop always runs >=1 time
+        raise last_exc
 
     def generate(
         self,

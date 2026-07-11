@@ -54,11 +54,36 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
         yaml.safe_dump(data, f, sort_keys=False)
 
 
+def _backfill_missing(user: dict[str, Any], defaults: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Add keys present in `defaults` but absent from `user`, recursively.
+
+    Existing user values are never touched or reordered, even if the
+    corresponding default has since changed -- only genuinely missing keys
+    (e.g. a whole new settings section added in a later version of Iris)
+    are added. Returns the possibly-updated dict and whether anything
+    changed, so the caller can skip rewriting the file when nothing did.
+    """
+    result = dict(user)
+    changed = False
+    for key, default_value in defaults.items():
+        if key not in result:
+            result[key] = default_value
+            changed = True
+        elif isinstance(default_value, dict) and isinstance(result[key], dict):
+            result[key], sub_changed = _backfill_missing(result[key], default_value)
+            changed = changed or sub_changed
+    return result, changed
+
+
 def load_settings() -> AppSettings:
     """Build an `AppSettings` instance from defaults + user overrides.
 
     Creates the user config file on first run so it exists for the user to
-    edit going forward.
+    edit going forward. On later runs, if the schema has grown since the
+    user's file was created (new settings sections/fields added in a newer
+    version of Iris), those missing keys are backfilled into the existing
+    file so they show up for editing -- without touching any values the
+    user has already customized. See docs/DECISIONS.md.
     """
     ensure_app_directories()
 
@@ -74,6 +99,15 @@ def load_settings() -> AppSettings:
     if not USER_CONFIG_FILE.exists():
         logger.info("First run detected — writing user config to %s", USER_CONFIG_FILE)
         _write_yaml(USER_CONFIG_FILE, settings.model_dump())
+    else:
+        backfilled, changed = _backfill_missing(user_overrides, defaults)
+        if changed:
+            logger.info(
+                "User config at %s is missing keys introduced by a newer version of "
+                "Iris -- backfilling them without touching your existing settings.",
+                USER_CONFIG_FILE,
+            )
+            _write_yaml(USER_CONFIG_FILE, backfilled)
 
     return settings
 
