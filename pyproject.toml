@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Iris — a fully local, voice-first AI desktop copilot for Windows."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = { text = "Proprietary" }
 authors = [
     { name = "Iris Project" }
 ]

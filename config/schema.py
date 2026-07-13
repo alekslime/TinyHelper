@@ -207,15 +207,15 @@ class VisionSettings(BaseModel):
         ),
     )
     repo_id: str = Field(
-        default="openbmb/MiniCPM-V-2_6-gguf",
-        description="Hugging Face repo to pull MiniCPM-V-2.6 GGUF files from, if local_model_path is unset.",
+        default="moondream/moondream2-gguf",
+        description="Hugging Face repo to pull moondream2 GGUF files from, if local_model_path is unset.",
     )
     model_filename: str = Field(
-        default="ggml-model-Q4_K_M.gguf",
+        default="moondream2-text-model-f16.gguf",
         description="GGUF text-model filename within repo_id.",
     )
     mmproj_filename: str = Field(
-        default="mmproj-model-f16.gguf",
+        default="moondream2-mmproj-f16.gguf",
         description="GGUF mmproj (vision projector) filename within repo_id.",
     )
     local_model_path: str | None = Field(
