@@ -1,4 +1,4 @@
-# Iris
+# Iris - WORKING!!!!!!!!!!!!!!!!!!!!!!!!
 
 A fully local, voice-first AI desktop copilot for Windows.
 
@@ -9,12 +9,15 @@ it with local models, and guides you visually and by voice.
 
 ## Status
 
-🚧 Early development. Milestone 5 (screen capture + vision) complete in
-code; both it and Milestone 4's LLM generation are still pending
-verification on real hardware with real internet access — see
-[`docs/TODO.md`](docs/TODO.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md)
-for what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full
-current state for anyone (human or AI) picking up development.
+🚧 Early development. Milestone 5 (screen capture + vision) is complete
+and working on real hardware, using MiniCPM-V-2.6 (via llama.cpp) for
+scene description plus Tesseract OCR for verbatim on-screen text —
+see [`HANDOFF.md`](HANDOFF.md) for the latest state. Some
+verification items are still open (see [`docs/TODO.md`](docs/TODO.md)),
+and a few docs there still describe an earlier ONNX-based version of the
+vision model — `HANDOFF.md` is the source of truth until those are
+refreshed. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's done and
+what's next.
 
 ## Core principles
 
@@ -34,8 +37,8 @@ Developed and tuned for:
 
 ## Tech stack
 
-Python 3.12+, PySide6, llama.cpp, Faster-Whisper, OpenWakeWord, MSS, OpenCV,
-ONNX Runtime, SQLite.
+Python 3.12+, PySide6, llama.cpp (LLM + MiniCPM-V-2.6 vision), Faster-Whisper,
+OpenWakeWord, MSS, OpenCV, Tesseract OCR, SQLite.
 
 ## Getting started (development)
 

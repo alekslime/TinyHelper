@@ -1,7 +1,7 @@
 """A real, visible `AuraRenderer`: a soft ambient glow around the screen
-edges, color-coded per `AuraState`, built from an actual Gaussian blur
-rather than hand-authored gradient stops, with smooth cross-fade
-transitions between states and a slow, continuous "breathing" pulse.
+edges, color-coded per `AuraState`, built from an actual Gaussian blur,
+tinted with a slowly-rotating multicolor gradient (rather than a flat
+color) and cross-faded smoothly between states.
 
 Replaces `NullAuraRenderer` as Iris's default renderer (Milestone 6). Built
 as a frameless, click-through, always-on-top top-level widget painted with
@@ -10,23 +10,28 @@ pipeline -- see docs/DECISIONS.md for why this still satisfies the
 roadmap's "GPU-rendered ambient edge glow" goal without a much heavier
 OpenGL/QML dependency.
 
-Visual model (2026-07-11 rewrite, replacing the gradient-stack approach):
-a solid-color band is painted along each edge, then blurred with Qt's
-`QGraphicsBlurEffect` -- a real Gaussian blur, not a manually tuned
-multi-stop gradient. This is a genuinely different rendering technique
-from the previous version: no hand-picked falloff curve, no separate
-corner patches to avoid seams (blur handles corners for free), just "draw
-a shape, blur it." The blurred shape (a `QImage`) is cached and only
-rebuilt on resize; per-frame work is just re-tinting that cached shape to
-the current color/brightness, which is cheap.
+Visual model (2026-07-13 rewrite, replacing the flat-tint approach; widened
+to a full-wheel pastel sweep later the same day):
+the blurred edge-band shape is unchanged from the previous version (see
+`_build_blurred_mask()`), but instead of re-tinting it to a single flat
+color per frame, it's re-tinted with a `QConicalGradient` centered on the
+screen: stops sweep through the *entire* hue wheel (+/- 180 degrees around
+the current state's base hue -- i.e. all the way around, not a narrow
+band), at low saturation/high value so every hue reads as pastel rather
+than neon. The gradient's angle continuously rotates, so the effect is a
+full-spectrum pastel wash smoothly circling the border. State is still
+reflected -- the anchor hue (where the sweep's start/end seam sits) cross-
+fades between states (see `_shortest_hue_delta()`) -- but since the sweep
+already spans every hue, a state change now reads mainly as a shift in
+*which hue is currently at a given angle* rather than a change in the
+overall palette, which stays a continuous pastel rainbow throughout.
 
 Design constraints from docs/ROADMAP.md, honored here:
     - State-based color transitions (idle/listening/thinking/waiting/error)
-    - Smooth fade in/out, no sharp/harsh edges (now a true Gaussian blur)
-    - A slow, subtle continuous breathing pulse (not a sharp flashing
-      pulse) -- intentionally revises the earlier "no pulsing" decision
-      after real-hardware feedback that the static version looked flat;
-      see docs/DECISIONS.md.
+    - Smooth fade in/out, no sharp/harsh edges (Gaussian blur, unchanged)
+    - A slow, subtle continuous animation (not a sharp flashing pulse) --
+      previously a breathing alpha pulse, now a rotating multicolor
+      gradient; see docs/DECISIONS.md for the history of this element.
 """
 
 from __future__ import annotations
@@ -35,8 +40,8 @@ import logging
 import math
 import time
 
-from PySide6.QtCore import QEasingCurve, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QColor, QConicalGradient, QGuiApplication, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene, QWidget
 
 from aura.renderer.base import AuraRenderer
@@ -54,38 +59,59 @@ SEED_BAND_PX = 18  # was 55; cut down, was eating too much of the screen
 # and was the main reason the glow reached so far inward before.
 BLUR_RADIUS_PX = 38  # was 90; cut down alongside SEED_BAND_PX
 
-# Peak alpha (0-255) of the tint applied to the blurred shape, before the
-# breathing multiplier is applied.
+# Peak alpha (0-255) of the tint applied to the blurred shape.
 PEAK_ALPHA = 235
 
-# --- Breathing pulse: a slow, continuous sine wave scaling peak alpha up
-# and down so the border reads as alive rather than a flat static line.
-# Subtle by design -- this is meant to feel like breathing, not blinking.
-BREATH_PERIOD_S = 4.2
-BREATH_MIN = 0.72  # multiplier on PEAK_ALPHA at the dimmest point
-BREATH_MAX = 1.0   # multiplier on PEAK_ALPHA at the brightest point
-BREATH_FPS = 30
+# --- Multicolor gradient: a QConicalGradient centered on the screen whose
+# stops orbit the current state's base hue, continuously rotating so the
+# border reads as alive/flowing rather than a flat static tint.
+GRADIENT_STOPS = 13          # more stops = smoother hue interpolation
+GRADIENT_HUE_SPREAD_DEG = 45  # how far stops swing from the anchor hue
+ROTATION_PERIOD_S = 9.0       # seconds for one full 360-degree rotation
+GRADIENT_FPS = 30
+GRADIENT_SAT = 235
+GRADIENT_VAL = 245
 
-# How long a state-to-state color cross-fade takes.
-TRANSITION_MS = 350
+# How long a state-to-state hue cross-fade takes.
+TRANSITION_MS = 500
 
 
-def _vivid(color: QColor) -> QColor:
-    """Boost a state color to near-full saturation/brightness so it reads
-    as a punchy neon tone rather than the softer flat colors used
-    elsewhere in the app's palette (e.g. buttons, text).
+def _shortest_hue_delta(start_deg: float, end_deg: float) -> float:
+    """Return the signed delta (in degrees) from `start_deg` to `end_deg`
+    that takes the shorter way around the color wheel, so animating a hue
+    never spins the "long way" around 360 degrees.
     """
-    h, s, v, a = color.getHsv()
-    vivid = QColor()
-    vivid.setHsv(h, max(s, 235), max(v, 245), a)
-    return vivid
+    delta = (end_deg - start_deg) % 360.0
+    if delta > 180.0:
+        delta -= 360.0
+    return delta
+
+
+def _gradient_colors(anchor_hue_deg: float, alpha: int) -> list[QColor]:
+    """Build the list of `GRADIENT_STOPS` colors used for one frame's
+    conical gradient: hues sweep from `anchor_hue_deg + spread` down to
+    `anchor_hue_deg - spread` and back up to `anchor_hue_deg + spread`
+    again (a cosine wave over stop position), so the first and last stop
+    match exactly -- required for a seamless loop on a gradient that wraps
+    around a full circle.
+    """
+    colors: list[QColor] = []
+    for i in range(GRADIENT_STOPS):
+        t = i / (GRADIENT_STOPS - 1)
+        offset = GRADIENT_HUE_SPREAD_DEG * math.cos(2 * math.pi * t)
+        hue = (anchor_hue_deg + offset) % 360.0
+        color = QColor()
+        color.setHsv(int(hue), GRADIENT_SAT, GRADIENT_VAL, alpha)
+        colors.append(color)
+    return colors
 
 
 def _build_blurred_mask(width: int, height: int) -> QImage:
     """Paint a solid white band along all four edges and blur it with a
     real Gaussian blur (`QGraphicsBlurEffect`). The result is a shape-only
     mask (white, varying alpha) -- color is applied later, per frame, via
-    `_tint()`, so this expensive part only has to run once per size.
+    `_tint_gradient()`, so this expensive part only has to run once per
+    size.
     """
     seed = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     seed.fill(0)
@@ -117,17 +143,23 @@ def _build_blurred_mask(width: int, height: int) -> QImage:
     return blurred
 
 
-def _tint(mask: QImage, color: QColor, alpha: int) -> QImage:
-    """Recolor a blurred white mask to `color` at `alpha`, keeping the
-    mask's own alpha shape. Cheap relative to `_build_blurred_mask` --
-    this is the only per-frame work.
+def _tint_gradient(mask: QImage, anchor_hue_deg: float, rotation_deg: float, alpha: int) -> QImage:
+    """Recolor a blurred white mask with a rotating multicolor
+    `QConicalGradient` centered on the mask, keeping the mask's own alpha
+    shape (`CompositionMode_SourceIn`). Cheap relative to
+    `_build_blurred_mask` -- this is the only per-frame work.
     """
     tinted = QImage(mask)
     painter = QPainter(tinted)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-    tint_color = QColor(color)
-    tint_color.setAlpha(max(0, min(255, alpha)))
-    painter.fillRect(tinted.rect(), tint_color)
+
+    center = QPointF(tinted.width() / 2.0, tinted.height() / 2.0)
+    gradient = QConicalGradient(center, rotation_deg)
+    colors = _gradient_colors(anchor_hue_deg, alpha)
+    for i, color in enumerate(colors):
+        gradient.setColorAt(i / (len(colors) - 1), color)
+
+    painter.fillRect(tinted.rect(), gradient)
     painter.end()
     return tinted
 
@@ -148,31 +180,29 @@ class _AuraOverlayWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self._color = QColor(66, 133, 244)
-        self._breath = 1.0  # current breathing multiplier, 0..1
+        self._anchor_hue = 0.0  # current state's base hue, 0-360 (animated on state change)
+        self._rotation = 0.0    # current gradient rotation angle, degrees
         self._mask: QImage | None = None  # cached blurred shape, rebuilt on resize
         self._mask_size: tuple[int, int] | None = None
 
-        self._breath_timer = QTimer(self)
-        self._breath_timer.setInterval(int(1000 / BREATH_FPS))
-        self._breath_timer.timeout.connect(self._tick_breath)
-        self._breath_start = time.monotonic()
-        self._breath_timer.start()
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(int(1000 / GRADIENT_FPS))
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_start = time.monotonic()
+        self._anim_timer.start()
 
-    def _tick_breath(self) -> None:
-        elapsed = time.monotonic() - self._breath_start
-        phase = (elapsed % BREATH_PERIOD_S) / BREATH_PERIOD_S
-        # 0..1 sine, smooth continuous loop -- no snap at the wraparound.
-        wave = 0.5 - 0.5 * math.cos(2 * math.pi * phase)
-        self._breath = BREATH_MIN + (BREATH_MAX - BREATH_MIN) * wave
+    def _tick(self) -> None:
+        elapsed = time.monotonic() - self._anim_start
+        phase = (elapsed % ROTATION_PERIOD_S) / ROTATION_PERIOD_S
+        self._rotation = phase * 360.0
         self.update()
 
-    def set_color(self, color: QColor) -> None:
-        self._color = color
+    def set_anchor_hue(self, hue_deg: float) -> None:
+        self._anchor_hue = hue_deg % 360.0
         self.update()
 
     def stop(self) -> None:
-        self._breath_timer.stop()
+        self._anim_timer.stop()
 
     def _ensure_mask(self) -> QImage | None:
         w, h = self.width(), self.height()
@@ -195,8 +225,7 @@ class _AuraOverlayWidget(QWidget):
         if mask is None:
             return
 
-        peak = int(PEAK_ALPHA * self._breath)
-        tinted = _tint(mask, self._color, peak)
+        tinted = _tint_gradient(mask, self._anchor_hue, self._rotation, PEAK_ALPHA)
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -204,8 +233,18 @@ class _AuraOverlayWidget(QWidget):
         painter.end()
 
 
+def _base_hue(state: AuraState) -> float:
+    """The anchor hue (0-360 degrees) a given `AuraState` maps to, derived
+    from its entry in `DEFAULT_STATE_COLORS`.
+    """
+    rgb = DEFAULT_STATE_COLORS.get(state, DEFAULT_STATE_COLORS[AuraState.IDLE])
+    hue = QColor(*rgb).hue()  # -1 for achromatic (grey); none of the defaults are
+    return float(hue) if hue >= 0 else 0.0
+
+
 class GlowAuraRenderer(AuraRenderer):
-    """Owns the overlay widget and animates color transitions between states.
+    """Owns the overlay widget and animates anchor-hue transitions between
+    states.
 
     Stateless about *why* a state changed -- same separation of concerns as
     `NullAuraRenderer`, just with actual pixels now.
@@ -214,7 +253,7 @@ class GlowAuraRenderer(AuraRenderer):
     def __init__(self) -> None:
         self._widget: _AuraOverlayWidget | None = None
         self._animation: QVariantAnimation | None = None
-        self._current_color: QColor = _vivid(QColor(*DEFAULT_STATE_COLORS[AuraState.IDLE]))
+        self._current_hue: float = _base_hue(AuraState.IDLE)
 
     def initialize(self) -> None:
         self._widget = _AuraOverlayWidget()
@@ -230,7 +269,7 @@ class GlowAuraRenderer(AuraRenderer):
             logger.warning("No primary screen detected — Aura overlay using a fallback size.")
             self._widget.resize(1920, 1080)
 
-        self._widget.set_color(self._current_color)
+        self._widget.set_anchor_hue(self._current_hue)
 
         self._animation = QVariantAnimation()
         self._animation.setDuration(TRANSITION_MS)
@@ -239,27 +278,31 @@ class GlowAuraRenderer(AuraRenderer):
 
         logger.debug("GlowAuraRenderer initialized (geometry=%s).", geometry)
 
-    def _on_animation_value_changed(self, value: QColor) -> None:
-        self._current_color = value
+    def _on_animation_value_changed(self, value: float) -> None:
+        self._current_hue = float(value) % 360.0
         if self._widget is not None:
-            self._widget.set_color(value)
+            self._widget.set_anchor_hue(self._current_hue)
 
     def set_state(self, state: AuraState) -> None:
-        target_rgb = DEFAULT_STATE_COLORS.get(state, DEFAULT_STATE_COLORS[AuraState.IDLE])
-        target_color = _vivid(QColor(*target_rgb))
+        target_hue = _base_hue(state)
 
         if self._animation is None:
             # set_state called before initialize() — shouldn't happen via
-            # AuraController, but degrade to an instant color set rather
+            # AuraController, but degrade to an instant hue set rather
             # than crash if it ever does.
-            self._current_color = target_color
+            self._current_hue = target_hue
             if self._widget is not None:
-                self._widget.set_color(target_color)
+                self._widget.set_anchor_hue(target_hue)
             return
 
+        # Animate via a delta from the current hue, taking the shorter way
+        # around the color wheel, rather than animating start->end hue
+        # values directly (which would wrap the "long way" whenever the
+        # target hue is numerically smaller, e.g. 260 -> 45).
+        delta = _shortest_hue_delta(self._current_hue, target_hue)
         self._animation.stop()
-        self._animation.setStartValue(self._current_color)
-        self._animation.setEndValue(target_color)
+        self._animation.setStartValue(self._current_hue)
+        self._animation.setEndValue(self._current_hue + delta)
         self._animation.start()
 
     def show(self) -> None:

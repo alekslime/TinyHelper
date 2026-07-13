@@ -25,31 +25,21 @@ loose ends.
       built in `main.py`, no changes to `llm/engine.py`'s single-string
       interface. Flagged in `docs/DECISIONS.md` as a starting point to
       revisit once real captions are seen on real hardware.
-- [ ] **Vision model has NOT been verified end-to-end on real hardware.**
-      This sandbox genuinely cannot reach Hugging Face Hub (confirmed via
-      a real 403/connection failure, not simulated), so `VisionModel`
-      could only be verified for its graceful-failure path — same
-      limitation as Milestone 4's LLM. Also unverified, since they need
-      the actual downloaded ONNX files to check: the encoder/decoder
-      input/output tensor names (`pixel_values`, `input_ids`,
-      `encoder_hidden_states`) assumed in `vision/model.py` match what
-      `Xenova/vit-gpt2-image-captioning`'s ONNX export actually uses, and
-      whether the plain (non-merged) `decoder_model.onnx` file exists at
-      that path in the repo at all — Xenova's exact file layout wasn't
-      directly inspectable from this sandbox either. **Next session on
-      real hardware should:** `pip install -e ".[vision]"`, set
-      `vision.enabled: true` in config, run `main.py`, ask a question
-      with something on screen, and confirm a real caption shows up
-      (check the console at `DEBUG` level for "Screen context added to
-      prompt") rather than a load/inference error. If the assumed
-      tensor/file names are wrong, the fix is local to `vision/model.py`
-      — nothing else depends on those specifics.
-- [ ] Caption quality/relevance is unverified — greedy decoding (no
-      beam search, no sampling) on a small captioning model may produce
-      generic or repetitive descriptions. Revisit once real captions are
-      visible on real hardware; a better/bigger vision model is a
-      config-only swap (`vision.repo_id`/filenames), same shape as
-      Milestone 4's LLM.
+- [x] **Verified end-to-end on real hardware (2026-07-13).** Ran with
+      `vision.enabled: true`, asked a screen-context question, and got a
+      correct, specific description back (confirmed against Adobe
+      Premiere Pro on screen). Note: by this point `vision/model.py` had
+      already moved on from the original ONNX/Xenova captioning approach
+      to MiniCPM-V-2.6 via `llama-cpp-python` (see the module docstring
+      and `docs/DECISIONS.md` for the moondream2 → MiniCPM-V rework) — it
+      was that later version that got verified, not the original
+      ONNX-based one described earlier in this entry.
+- [x] Caption quality confirmed reasonable on real hardware (2026-07-13)
+      — MiniCPM-V-2.6 correctly identified Adobe Premiere Pro and gave
+      screen-grounded editing guidance. Open question flagged separately
+      below: it's currently CPU-only per query, which trades quality for
+      real latency — worth gating (see "loose ends") rather than running
+      on every query.
 
 ## Milestone 6 — Aura Rendering — COMPLETE (code + offscreen visual verification), pending real-display check
 
@@ -110,16 +100,10 @@ rendered each `AuraState`, pixel-sampled the falloff curve, and (for v4)
 confirmed no seam and a smooth Gaussian-like decay via direct pixel
 sampling at multiple x-offsets from the edge.
 
-- [ ] **Never confirmed live on a real display.** Every version above,
-      including the current Gaussian-blur one, has only been verified via
-      offscreen rendering (`QT_QPA_PLATFORM=offscreen`) and pixel
-      sampling — click-through behavior, always-on-top stacking, and how
-      the blur actually reads over real desktop content and at real
-      viewing distance are all unverified. Next session on real hardware
-      should: run `main.py`, confirm the blurred glow appears around all
-      four edges, trigger a few state changes to see the cross-fade and
-      breathing live, and confirm click-through still works (nothing
-      about the paint pipeline changed there, but worth re-checking).
+- [x] **Confirmed live on a real display (2026-07-13).** The design
+      history above (v1 → v4) was itself driven by direct feedback on
+      real-hardware screenshots at each step, so this was verified
+      incrementally rather than in one final pass.
 - [ ] **Single-monitor only.** `GlowAuraRenderer.initialize()` sizes the
       overlay to `QGuiApplication.primaryScreen()`'s geometry, not the
       combined virtual geometry of all monitors — on a multi-monitor
@@ -161,25 +145,15 @@ sampling at multiple x-offsets from the edge.
       **Still needs a real-hardware re-run** to confirm the fallback
       actually fires and recovers on the machine that hit this, not just
       in the mocked test.
-- [ ] **Real LLM generation still not verified end-to-end on real
-      hardware.** First attempt (2026-07-11) hit a transient SSL handshake
-      timeout talking to Hugging Face Hub during `Llama.from_pretrained`'s
-      repo-listing call — not a code bug (a plain file download to the
-      same host succeeded seconds later in the same run), but
-      `Llama.from_pretrained` has to list every file in the repo before
-      downloading, which is a heavier/less patient Hub API call than a
-      direct file fetch. Added retry-with-backoff
-      (`LLMEngine._load_from_hub_with_retry`, `DOWNLOAD_RETRY_ATTEMPTS` = 3,
-      `DOWNLOAD_RETRY_BACKOFF_S` = 2.0) so one flaky connection doesn't
-      fail the whole app — covered by `tests/test_llm_engine.py` (fakes
-      `llama_cpp` since it's not installable in this sandbox; verifies
-      retry-then-succeed, give-up-after-max-attempts, no-retry-needed, and
-      local-path-bypasses-retry cases). **Still need an actual successful
-      end-to-end run** — retry logic is only proven against mocked
-      failures, not a real connection, and generation quality/latency/VRAM
-      usage on the RTX 3070 Ti is still completely unverified. Next
-      session: `pip install -e ".[llm]"`, run `main.py`, ask a question via
-      debug text input or voice, confirm a reasonable response appears.
+- [x] **Real LLM generation verified end-to-end on real hardware
+      (2026-07-13).** `pip install -e ".[llm]"`, ran `main.py`, asked via
+      the debug text input, got a coherent generated response back in the
+      response window. Retry-with-backoff logic (added 2026-07-11 for the
+      transient SSL handshake timeout) has not needed to fire again since,
+      but remains in place. Quality/latency/VRAM usage on the actual RTX
+      3070 Ti still hasn't been explicitly measured/reported — see the
+      startup-timing item below, which the next session will cover at the
+      same time.
 - [ ] The default model (`Qwen/Qwen2.5-0.5B-Instruct-GGUF`,
       Q4_K_M) was picked to get something small and fast working
       end-to-end, not for response quality — revisit once real hardware
@@ -205,7 +179,10 @@ sampling at multiple x-offsets from the edge.
       `VisionModel` itself all still have zero test coverage and would
       benefit from a proper pytest suite instead of ad-hoc verification
       scripts used during development.
-- [ ] Add a `LICENSE` file (MIT referenced in `pyproject.toml` but not yet present)
+- [x] Add a `LICENSE` file — project is private/proprietary (all rights
+      reserved, no third-party use, modification, or redistribution);
+      `pyproject.toml`'s `license` field updated from the old placeholder
+      "MIT" to "Proprietary" to match.
 - [ ] Consider a `Makefile` or `justfile` for common dev commands
       (`run`, `test`, `lint`, `format`) once there's enough to script
 - [ ] `GlowAuraRenderer` has no visual guidance rendering yet (arrows,
@@ -224,6 +201,24 @@ sampling at multiple x-offsets from the edge.
       (weaker than the documented RTX 3070 Ti target), this may add real
       time to startup — worth timing on real hardware and reconsidering
       lazy-loading if it's noticeably slow.
+
+- [ ] **Gate vision (MiniCPM-V-2.6) behind relevance, don't run it on
+      every query.** Confirmed working and reasonably accurate on real
+      hardware (2026-07-13), but it's CPU-only (`n_gpu_layers=0` — no
+      spare VRAM alongside the main LLM on the 3070 Ti's 8GB) and 8B
+      params, so running it unconditionally on every transcribed query
+      trades real latency for context most queries won't need. Plan:
+      either (a) a keyword heuristic in `main.py` on the transcribed text
+      before calling `_build_prompt_with_screen_context` (e.g. "screen",
+      "this", "here", "see", "look"), or (b) an explicit trigger phrase
+      ("look at my screen") the user says to opt in per-query. OCR
+      (`vision/ocr.py`) is comparatively cheap and can likely stay
+      gated the same way rather than needing its own logic.
+- [ ] **Startup timing still not measured on real hardware.** Flagged
+      since Milestone 3/4 — five models now load eagerly at launch (wake
+      word, Whisper, LLM, vision, OCR is cheap). Next launch: time from
+      process start to window becoming usable, report back before
+      deciding whether lazy-loading is worth it.
 
 ## Known issues
 

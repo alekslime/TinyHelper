@@ -34,6 +34,8 @@ speech/__init__.py
 speech/listening_session.py
 speech/transcriber.py
 tests/test_llm_engine.py
+tests/test_ocr.py
+tests/test_settings.py
 tests/test_transcriber.py
 tests/test_vision_model.py
 utils/__init__.py
@@ -41,6 +43,7 @@ utils/logger.py
 vision/__init__.py
 vision/capture.py
 vision/model.py
+vision/ocr.py
 voice/__init__.py
 voice/audio_stream.py
 voice/service.py
