@@ -207,32 +207,59 @@ class VisionSettings(BaseModel):
         ),
     )
     repo_id: str = Field(
-        default="Xenova/vit-gpt2-image-captioning",
-        description="Hugging Face repo to pull ONNX vision-model files from, if local_model_dir is unset.",
+        default="openbmb/MiniCPM-V-2_6-gguf",
+        description="Hugging Face repo to pull MiniCPM-V-2.6 GGUF files from, if local_model_path is unset.",
     )
-    encoder_filename: str = Field(
-        default="onnx/encoder_model.onnx",
-        description="Encoder ONNX filename within repo_id.",
+    model_filename: str = Field(
+        default="ggml-model-Q4_K_M.gguf",
+        description="GGUF text-model filename within repo_id.",
     )
-    decoder_filename: str = Field(
-        default="onnx/decoder_model.onnx",
-        description="Decoder ONNX filename within repo_id.",
+    mmproj_filename: str = Field(
+        default="mmproj-model-f16.gguf",
+        description="GGUF mmproj (vision projector) filename within repo_id.",
     )
-    tokenizer_filename: str = Field(
-        default="tokenizer.json",
-        description="Fast-tokenizer JSON filename within repo_id.",
-    )
-    local_model_dir: str | None = Field(
+    local_model_path: str | None = Field(
         default=None,
-        description=(
-            "Path to a local directory containing the encoder/decoder/"
-            "tokenizer files. Overrides repo_id-based downloading when set."
-        ),
+        description="Path to a local GGUF text-model file. Overrides repo_id-based downloading when set.",
     )
-    max_new_tokens: int = Field(
-        default=30,
+    local_mmproj_path: str | None = Field(
+        default=None,
+        description="Path to a local GGUF mmproj file. Required alongside local_model_path.",
+    )
+    n_ctx: int = Field(
+        default=2048,
         ge=1,
-        description="Maximum tokens to generate per screenshot caption.",
+        description="Context window for the vision model (image embeddings consume context).",
+    )
+    n_gpu_layers: int = Field(
+        default=0,
+        description="GPU layers to offload for the vision model's text half. -1 = all.",
+    )
+    max_tokens: int = Field(
+        default=256,
+        ge=1,
+        description="Maximum tokens to generate per screenshot description.",
+    )
+    caption_prompt: str = Field(
+        default=(
+            "Describe what's on this screen concisely, focusing on any visible "
+            "application windows, UI elements, and what the user appears to be doing."
+        ),
+        description="Prompt sent to the vision model alongside each screenshot.",
+    )
+    ocr_enabled: bool = Field(
+        default=True,
+        description="Whether to also run Tesseract OCR for verbatim on-screen text, alongside the scene description.",
+    )
+    ocr_min_confidence: float = Field(
+        default=60.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum per-word Tesseract confidence (0-100) to include a word in OCR output.",
+    )
+    tesseract_cmd: str | None = Field(
+        default=None,
+        description="Full path to the tesseract executable, if it isn't on PATH.",
     )
 
 

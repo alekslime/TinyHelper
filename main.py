@@ -70,11 +70,13 @@ except ImportError:
 try:
     from vision.capture import ScreenCapture
     from vision.model import VisionModel
+    from vision.ocr import OCRReader
 
     _VISION_AVAILABLE = True
 except ImportError:
     ScreenCapture = None  # type: ignore[assignment,misc]
     VisionModel = None  # type: ignore[assignment,misc]
+    OCRReader = None  # type: ignore[assignment,misc]
     _VISION_AVAILABLE = False
 
 
@@ -141,6 +143,7 @@ def main() -> int:
     # than crashing, and _generate_worker simply skips the screen-context step.
     screen_capture = None
     vision_model = None
+    ocr_reader = None
     if not settings.vision.enabled:
         logger.info("Screen-context awareness disabled (vision.enabled=false in config).")
     elif _VISION_AVAILABLE:
@@ -148,16 +151,33 @@ def main() -> int:
         try:
             vision_model = VisionModel(
                 repo_id=settings.vision.repo_id,
-                encoder_filename=settings.vision.encoder_filename,
-                decoder_filename=settings.vision.decoder_filename,
-                tokenizer_filename=settings.vision.tokenizer_filename,
-                local_model_dir=settings.vision.local_model_dir,
+                model_filename=settings.vision.model_filename,
+                mmproj_filename=settings.vision.mmproj_filename,
+                local_model_path=settings.vision.local_model_path,
+                local_mmproj_path=settings.vision.local_mmproj_path,
+                n_ctx=settings.vision.n_ctx,
+                n_gpu_layers=settings.vision.n_gpu_layers,
             )
         except RuntimeError:
             logger.exception(
                 "Could not load the vision model — continuing without screen context."
             )
             vision_model = None
+
+        # OCR is independent of the scene-description model above -- a
+        # failure here (e.g. Tesseract binary not installed) shouldn't take
+        # down scene description, and vice versa. See vision/ocr.py.
+        if settings.vision.ocr_enabled:
+            try:
+                ocr_reader = OCRReader(
+                    tesseract_cmd=settings.vision.tesseract_cmd,
+                    min_confidence=settings.vision.ocr_min_confidence,
+                )
+            except RuntimeError:
+                logger.exception(
+                    "Could not load the OCR reader — continuing without verbatim on-screen text."
+                )
+                ocr_reader = None
     else:
         logger.warning(
             "Vision dependencies not installed (pip install -e '.[vision]') — "
@@ -176,20 +196,44 @@ def main() -> int:
         # (captioning is CPU-bound greedy decoding, see vision/model.py).
         # Any failure here is logged and swallowed — screen context is a
         # nice-to-have, never worth failing the whole query over.
-        if vision_model is None or screen_capture is None:
+        if screen_capture is None or (vision_model is None and ocr_reader is None):
             return text
         try:
             image = screen_capture.capture()
-            caption = vision_model.describe(image, max_new_tokens=settings.vision.max_new_tokens)
         except Exception:
-            logger.exception("Screen capture/captioning failed — continuing without screen context.")
+            logger.exception("Screen capture failed — continuing without screen context.")
             return text
 
-        if not caption:
+        caption = ""
+        if vision_model is not None:
+            try:
+                caption = vision_model.describe(
+                    image,
+                    prompt=settings.vision.caption_prompt,
+                    max_tokens=settings.vision.max_tokens,
+                )
+            except Exception:
+                logger.exception("Screen captioning failed — continuing without scene description.")
+
+        ocr_text = ""
+        if ocr_reader is not None:
+            try:
+                ocr_text = ocr_reader.read(image)
+            except Exception:
+                logger.exception("OCR failed — continuing without verbatim on-screen text.")
+
+        if not caption and not ocr_text:
             return text
 
-        logger.debug("Screen context added to prompt: %r", caption)
-        return f"[Current screen shows: {caption}]\n\nUser: {text}"
+        context_lines = []
+        if caption:
+            context_lines.append(f"Screen description: {caption}")
+        if ocr_text:
+            context_lines.append(f"Verbatim text on screen: {ocr_text}")
+        context = "\n".join(context_lines)
+
+        logger.debug("Screen context added to prompt: %r", context)
+        return f"[{context}]\n\nUser: {text}"
 
     def _generate_worker(text: str) -> None:
         # Runs on a dedicated worker thread — never the audio callback
