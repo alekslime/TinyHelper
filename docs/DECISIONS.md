@@ -722,6 +722,7 @@ tune the vision model. Resynced to the current GGUF-based fields
 `caption_prompt`) plus the new `trigger_keywords`, `ocr_enabled`,
 `ocr_min_confidence`, `tesseract_cmd`. No schema change — `config/schema.py`
 was already correct; only the bundled yaml was stale.
+<<<<<<< HEAD
 
 ## Milestone 7: Aura morphs to trace a target box, not a generic overlay layer (2026-07-13)
 
@@ -790,3 +791,5 @@ actually run MiniCPM-V-2.6 inference. Real-hardware verification needs to
 confirm the grammar produces not just valid JSON but *sensible* boxes on
 real screenshots, per the "constrains structure, not semantics" note
 above.
+=======
+>>>>>>> 7cf67005d3ee82daab4ff06c8b0f88bdee7c755a

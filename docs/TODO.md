@@ -136,6 +136,7 @@ sampling at multiple x-offsets from the edge.
       `tesseract_cmd`) plus the new `trigger_keywords`. Verified the merged
       `AppSettings` still matches schema defaults after the change.
 
+<<<<<<< HEAD
 ## Milestone 7 — Visual Guidance — IN PROGRESS
 
 Design (2026-07-13, refined through direct back-and-forth): instead of a
@@ -184,6 +185,8 @@ One box at a time, not a general shape/annotation system. See
       needs a `QTimer` polling `QCursor.pos()` against the box rect, or
       an event filter).
 
+=======
+>>>>>>> 7cf67005d3ee82daab4ff06c8b0f88bdee7c755a
 ## Loose ends / small items
 
 - [x] **Fixed: Whisper transcription crashed permanently on real hardware
