@@ -207,15 +207,15 @@ class VisionSettings(BaseModel):
         ),
     )
     repo_id: str = Field(
-        default="moondream/moondream2-gguf",
-        description="Hugging Face repo to pull moondream2 GGUF files from, if local_model_path is unset.",
+        default="openbmb/MiniCPM-V-2_6-gguf",
+        description="Hugging Face repo to pull MiniCPM-V-2.6 GGUF files from, if local_model_path is unset.",
     )
     model_filename: str = Field(
-        default="moondream2-text-model-f16.gguf",
+        default="ggml-model-Q4_K_M.gguf",
         description="GGUF text-model filename within repo_id.",
     )
     mmproj_filename: str = Field(
-        default="moondream2-mmproj-f16.gguf",
+        default="mmproj-model-f16.gguf",
         description="GGUF mmproj (vision projector) filename within repo_id.",
     )
     local_model_path: str | None = Field(
@@ -227,9 +227,13 @@ class VisionSettings(BaseModel):
         description="Path to a local GGUF mmproj file. Required alongside local_model_path.",
     )
     n_ctx: int = Field(
-        default=2048,
+        default=4096,
         ge=1,
-        description="Context window for the vision model (image embeddings consume context).",
+        description=(
+            "Context window for the vision model (image embeddings consume "
+            "context). MiniCPM-V-2.6's larger vision encoder needs more "
+            "room than moondream2's 2048 did -- see vision/model.py."
+        ),
     )
     n_gpu_layers: int = Field(
         default=0,
@@ -246,6 +250,31 @@ class VisionSettings(BaseModel):
             "application windows, UI elements, and what the user appears to be doing."
         ),
         description="Prompt sent to the vision model alongside each screenshot.",
+    )
+    gate_on_keywords: bool = Field(
+        default=True,
+        description=(
+            "When true (the default), screen capture + captioning/OCR only "
+            "run if the transcribed text contains one of trigger_keywords -- "
+            "MiniCPM-V-2.6 is CPU-only on the target 8GB-VRAM hardware "
+            "(see docs/DECISIONS.md), so running it on every query costs "
+            "real latency most queries don't need. When false, vision runs "
+            "on every query regardless of wording (the original Milestone 5 "
+            "behavior)."
+        ),
+    )
+    trigger_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "screen", "this", "here", "see", "look", "showing",
+            "displayed", "visible", "window", "app", "application",
+        ],
+        description=(
+            "Case-insensitive substring match against the transcribed text. "
+            "Only used when gate_on_keywords is true. Deliberately broad "
+            "(favors false triggers over missed ones) -- an unneeded "
+            "screenshot costs latency, a needed one that's skipped costs a "
+            "wrong/blind answer, which is worse."
+        ),
     )
     ocr_enabled: bool = Field(
         default=True,

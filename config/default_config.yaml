@@ -55,12 +55,20 @@ vision:
   monitor_index: 0  # 0 = all monitors combined; 1, 2, ... = a single monitor
   save_debug_screenshots: false  # developer aid only -- screenshots are discarded after use by default
   debug_screenshot_dir: null  # null = <app data dir>/data/debug_screenshots
-  repo_id: Xenova/vit-gpt2-image-captioning  # ONNX-exported ViT encoder + GPT-2 decoder captioning model
-  encoder_filename: onnx/encoder_model.onnx
-  decoder_filename: onnx/decoder_model.onnx
-  tokenizer_filename: tokenizer.json
-  local_model_dir: null  # set to bypass the Hub download entirely and load local ONNX/tokenizer files
-  max_new_tokens: 30
+  repo_id: openbmb/MiniCPM-V-2_6-gguf  # scene description + OCR-capable vision-language model, via llama-cpp-python
+  model_filename: ggml-model-Q4_K_M.gguf
+  mmproj_filename: mmproj-model-f16.gguf
+  local_model_path: null  # set to bypass the Hub download entirely and load a local GGUF file
+  local_mmproj_path: null  # required alongside local_model_path
+  n_ctx: 4096
+  n_gpu_layers: 0  # CPU by default -- see docs/DECISIONS.md re: VRAM budget on 8GB cards
+  max_tokens: 256
+  caption_prompt: "Describe what's on this screen concisely, focusing on any visible application windows, UI elements, and what the user appears to be doing."
+  gate_on_keywords: true  # only run vision when the transcribed text sounds screen-related -- see docs/DECISIONS.md
+  trigger_keywords: [screen, this, here, see, look, showing, displayed, visible, window, app, application]
+  ocr_enabled: true
+  ocr_min_confidence: 60.0
+  tesseract_cmd: null  # set to tesseract's full exe path if it isn't on PATH
 
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

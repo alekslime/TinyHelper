@@ -189,14 +189,28 @@ def main() -> int:
         logger.info("Wake word '%s' detected (score=%.3f) — Aura -> LISTENING", model_name, score)
         aura.set_state(AuraState.LISTENING)
 
+    def _screen_context_likely(text: str) -> bool:
+        # Cheap substring check against settings.vision.trigger_keywords,
+        # case-insensitive. Deliberately biased toward false triggers over
+        # missed ones -- an unneeded screenshot costs latency, a needed one
+        # that's skipped costs a wrong/blind answer, which is worse. See
+        # config/schema.py:VisionSettings.gate_on_keywords and
+        # docs/DECISIONS.md.
+        lowered = text.lower()
+        return any(keyword in lowered for keyword in settings.vision.trigger_keywords)
+
     def _build_prompt_with_screen_context(text: str) -> str:
         # Runs on the same worker thread as generation (see _generate_worker).
         # Capture + captioning happen here, not on the Qt main thread, for
         # the same reason LLM generation does — this can take real time
-        # (captioning is CPU-bound greedy decoding, see vision/model.py).
-        # Any failure here is logged and swallowed — screen context is a
-        # nice-to-have, never worth failing the whole query over.
+        # (MiniCPM-V-2.6 is CPU-only on the target 8GB-VRAM hardware, see
+        # docs/DECISIONS.md). Any failure here is logged and swallowed —
+        # screen context is a nice-to-have, never worth failing the whole
+        # query over.
         if screen_capture is None or (vision_model is None and ocr_reader is None):
+            return text
+        if settings.vision.gate_on_keywords and not _screen_context_likely(text):
+            logger.debug("Skipping screen context — no trigger keyword in transcript.")
             return text
         try:
             image = screen_capture.capture()
