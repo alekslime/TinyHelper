@@ -45,9 +45,11 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
+from typing import NamedTuple
 
-from llama_cpp import Llama
+from llama_cpp import Llama, LlamaGrammar
 from llama_cpp.llama_chat_format import MiniCPMv26ChatHandler
 from PIL import Image
 
@@ -74,6 +76,57 @@ DEFAULT_CAPTION_PROMPT = (
     "Describe what's on this screen concisely, focusing on any visible "
     "application windows, UI elements, and what the user appears to be doing."
 )
+
+# --- Milestone 7: locate() -- grammar-constrained single-bounding-box output ---
+#
+# `x`/`y`/`w`/`h` are percentages of the screenshot (0-100), not pixels --
+# the vision model reasons over its resized input image, not the caller's
+# actual screen resolution, so percentages are the only thing it can
+# reliably estimate. `main.py` converts to real pixels using the known
+# capture geometry (see docs/DECISIONS.md).
+#
+# `found=False` means "the model looked and decided nothing matches" --
+# `x`/`y`/`w`/`h`/`label` are meaningless in that case (schema still
+# requires them, to keep the grammar simple, but callers must ignore
+# them when found is False). Per docs/DECISIONS.md, `found=False` and a
+# genuine parse failure (locate() returning None) are treated identically
+# by the caller -- both mean "nothing to point at right now."
+DEFAULT_LOCATE_SYSTEM_PROMPT = (
+    "You are an assistant that finds a single UI element on a screenshot "
+    "and reports its location as a bounding box, in percent of the image "
+    "(0-100 for x, y, width, and height). If no matching element is "
+    "visible, set found to false."
+)
+DEFAULT_LOCATE_PROMPT = "Find this on the screen and report its bounding box: {target}"
+DEFAULT_LOCATE_MAX_TOKENS = 128
+
+LOCATE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "found": {"type": "boolean"},
+        "label": {"type": "string"},
+        "x": {"type": "integer", "minimum": 0, "maximum": 100},
+        "y": {"type": "integer", "minimum": 0, "maximum": 100},
+        "w": {"type": "integer", "minimum": 0, "maximum": 100},
+        "h": {"type": "integer", "minimum": 0, "maximum": 100},
+    },
+    "required": ["found", "label", "x", "y", "w", "h"],
+}
+
+
+class VisionLocation(NamedTuple):
+    """A single bounding box, in percent of the screenshot (0-100 each).
+
+    `found=False` means treat `label`/`x`/`y`/`w`/`h` as meaningless --
+    see the `LOCATE_JSON_SCHEMA` comment above.
+    """
+
+    found: bool
+    label: str
+    x: int
+    y: int
+    w: int
+    h: int
 
 
 def _image_to_data_uri(image: Image.Image) -> str:
@@ -162,6 +215,10 @@ class VisionModel:
             ) from exc
 
         logger.info("Vision model ready.")
+        # Lazily built on first locate() call, then reused -- building a
+        # LlamaGrammar has real (if small) overhead, and the schema never
+        # changes between calls.
+        self._locate_grammar: LlamaGrammar | None = None
 
     def describe(
         self,
@@ -200,3 +257,78 @@ class VisionModel:
 
         logger.debug("Vision model generated %d chars: %r", len(text), text)
         return text
+
+    def locate(
+        self,
+        image: Image.Image,
+        target: str,
+        max_tokens: int = DEFAULT_LOCATE_MAX_TOKENS,
+    ) -> VisionLocation | None:
+        """Find a single UI element on a screenshot and return its
+        bounding box as percentages of the image (0-100 each).
+
+        `target` describes what to find (e.g. "the save button", or the
+        user's own phrasing of what they asked about) and is substituted
+        into `DEFAULT_LOCATE_PROMPT`.
+
+        Output is grammar-constrained (see `LOCATE_JSON_SCHEMA`) via
+        `LlamaGrammar.from_json_schema`, so llama.cpp cannot emit anything
+        that doesn't parse as that JSON shape at the token level. This
+        constrains *structure*, not *semantics* -- the model could still
+        report a `found=True` box that doesn't actually correspond to
+        anything real, or numeric bounds that are individually valid but
+        nonsensical together (e.g. `x=90, w=50`, which would extend past
+        the right edge). Callers should treat this as "structurally
+        trustworthy, not semantically guaranteed" -- Milestone 7's
+        wiring should clamp/sanity-check the box before using it.
+
+        Returns `None` if the model's output somehow still fails to
+        parse despite the grammar (should be rare, but llama.cpp grammar
+        support doesn't guarantee zero failure modes across all model/
+        quantization combinations). Per docs/DECISIONS.md, callers should
+        treat `None` and `found=False` identically -- both mean "nothing
+        to show right now," not two different error states.
+        """
+        if self._locate_grammar is None:
+            self._locate_grammar = LlamaGrammar.from_json_schema(
+                json.dumps(LOCATE_JSON_SCHEMA)
+            )
+
+        data_uri = _image_to_data_uri(image)
+        messages = [
+            {"role": "system", "content": DEFAULT_LOCATE_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {"type": "text", "text": DEFAULT_LOCATE_PROMPT.format(target=target)},
+                ],
+            },
+        ]
+        result = self._model.create_chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.1,
+            grammar=self._locate_grammar,
+        )
+        content = result["choices"][0]["message"]["content"]
+        raw = content.strip() if content else ""
+        logger.debug("Vision model locate() generated %d chars: %r", len(raw), raw)
+
+        try:
+            data = json.loads(raw)
+            return VisionLocation(
+                found=bool(data["found"]),
+                label=str(data.get("label", "")),
+                x=int(data["x"]),
+                y=int(data["y"]),
+                w=int(data["w"]),
+                h=int(data["h"]),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            logger.warning(
+                "locate() produced output that didn't match the expected "
+                "shape despite the grammar constraint: %r",
+                raw,
+            )
+            return None

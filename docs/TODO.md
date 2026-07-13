@@ -122,6 +122,68 @@ sampling at multiple x-offsets from the edge.
       resize (which should be rare for a full-screen overlay), but hasn't
       been measured on real target hardware.
 
+- [x] **Fixed: `config/default_config.yaml`'s `vision:` section was stale
+      (2026-07-13).** Still had the original ONNX/Xenova captioning fields
+      (`encoder_filename`, `decoder_filename`, `tokenizer_filename`,
+      `local_model_dir`, `max_new_tokens`) from before the moondream2 →
+      MiniCPM-V-2.6 rework (see `docs/DECISIONS.md`). Harmless in practice
+      — Pydantic silently falls back to `VisionSettings`' schema defaults
+      for anything the yaml doesn't provide — but misleading for anyone
+      editing the bundled yaml expecting those fields to do something.
+      Replaced with the current GGUF fields (`repo_id`, `model_filename`,
+      `mmproj_filename`, `local_model_path`, `local_mmproj_path`, `n_ctx`,
+      `n_gpu_layers`, `max_tokens`, `caption_prompt`, `ocr_*`,
+      `tesseract_cmd`) plus the new `trigger_keywords`. Verified the merged
+      `AppSettings` still matches schema defaults after the change.
+
+## Milestone 7 — Visual Guidance — IN PROGRESS
+
+Design (2026-07-13, refined through direct back-and-forth): instead of a
+generic multi-shape overlay layer, the existing full-screen edge Aura
+(Milestone 6's `GlowAuraRenderer`) will itself morph to trace the outline
+of a single target UI element, then ease back to the full-screen edge.
+One box at a time, not a general shape/annotation system. See
+`docs/DECISIONS.md` for the full reasoning and the parts breakdown.
+
+- [x] **Part B.1 — Vision model structured output.** `vision/model.py`:
+      added `VisionModel.locate(image, target)`, grammar-constrained (via
+      `LlamaGrammar.from_json_schema`, `llama-cpp-python`'s built-in
+      GBNF-from-JSON-Schema support) to always return
+      `{"found": bool, "label": str, "x": int, "y": int, "w": int, "h": int}`
+      — `x`/`y`/`w`/`h` as percent of the screenshot (0-100), not pixels
+      (see the `LOCATE_JSON_SCHEMA` comment in `vision/model.py` for why).
+      `found=False` and a genuine parse failure (`locate()` returning
+      `None`) are deliberately treated as equivalent by callers — both
+      mean "nothing to point at," not two different error states.
+      Covered by 6 real tests in `tests/test_vision_model.py` (grammar
+      built from the exact schema, built once and reused across calls,
+      well-formed found/not-found responses, unparseable-output and
+      missing-required-field failure paths, target substituted into the
+      prompt) — all passing, no mocking of the parsing/grammar-building
+      logic itself, only the underlying `Llama` instance (same pattern as
+      `test_llm_engine.py`).
+      **Not yet run against the real model** — this sandbox can't run
+      real MiniCPM-V-2.6 inference (no GPU/model weights); needs a
+      real-hardware pass to confirm the grammar actually produces valid,
+      *semantically* sensible boxes (the grammar guarantees shape, not
+      correctness — see the `locate()` docstring).
+- [ ] **Part B.2 — Generalize `GlowAuraRenderer` to trace an arbitrary
+      rectangle.** Currently only traces the 4 screen edges. Needs a
+      `target_rect` concept (screen bounds by default) and a geometry
+      morph animation (screen edges → box edges), reusing the existing
+      `QVariantAnimation` cross-fade pattern from Milestone 6's color
+      transitions.
+- [ ] **Part B.3 — Wiring.** `found=True` → new `show_target_box(x, y, w,
+      h)` on the aura controller (percent-to-pixel conversion happens
+      here, using the known screen-capture geometry). `found=False` /
+      parse failure → `AuraState.ERROR` (already red, already wired) +
+      a reply asking the user if they want to try again.
+- [ ] **Part B.4 — Reverting to full-screen edges.** Two triggers: (1)
+      the next query comes in, (2) the cursor dwells inside the target
+      box for ~4 seconds (matches the existing breathing-pulse period —
+      needs a `QTimer` polling `QCursor.pos()` against the box rect, or
+      an event filter).
+
 ## Loose ends / small items
 
 - [x] **Fixed: Whisper transcription crashed permanently on real hardware
@@ -172,11 +234,20 @@ sampling at multiple x-offsets from the edge.
       speak. Remember to set `debug.enabled: false` (or remove the panel
       entirely) once Milestone 10's real settings UI / end-user experience
       lands — it's explicitly a dev aid, not part of Iris's intended UX.
-- [ ] Add `tests/` content — was completely empty; now has one file,
-      `tests/test_vision_model.py`, covering only `vision/model.py`'s
-      `preprocess_image()` (the part that doesn't need real model files
-      to test). `voice/`, `speech/`, `llm/`, `vision/capture.py`, and
-      `VisionModel` itself all still have zero test coverage and would
+- [x] **Fixed: two dead test files (2026-07-13).** `tests/test_vision_model.py`
+      and `tests/test_ocr.py` both imported free functions
+      (`preprocess_image`, `extract_text`) that no longer exist — leftover
+      from the ONNX/Xenova → MiniCPM-V-2.6 rework and the later refactor
+      of OCR into the `OCRReader` class. Both silently failed collection
+      (ImportError) with nothing exercising either module. Rewritten
+      against the current APIs (`VisionModel.locate()` for the former,
+      `OCRReader.__init__`/`.read()` for the latter) — 6 and 5 real tests
+      respectively, all passing. `voice/`, `speech/`, `llm/engine.py`
+      (partially, via `test_llm_engine.py`) still need their own coverage
+      — see next item.
+- [ ] Add `tests/` content — `voice/`, `speech/`, `llm/engine.py`
+      (partially covered by `test_llm_engine.py`'s retry logic only),
+      and `vision/capture.py` still have zero test coverage and would
       benefit from a proper pytest suite instead of ad-hoc verification
       scripts used during development.
 - [x] Add a `LICENSE` file — project is private/proprietary (all rights
@@ -202,18 +273,19 @@ sampling at multiple x-offsets from the edge.
       time to startup — worth timing on real hardware and reconsidering
       lazy-loading if it's noticeably slow.
 
-- [ ] **Gate vision (MiniCPM-V-2.6) behind relevance, don't run it on
-      every query.** Confirmed working and reasonably accurate on real
-      hardware (2026-07-13), but it's CPU-only (`n_gpu_layers=0` — no
-      spare VRAM alongside the main LLM on the 3070 Ti's 8GB) and 8B
-      params, so running it unconditionally on every transcribed query
-      trades real latency for context most queries won't need. Plan:
-      either (a) a keyword heuristic in `main.py` on the transcribed text
-      before calling `_build_prompt_with_screen_context` (e.g. "screen",
-      "this", "here", "see", "look"), or (b) an explicit trigger phrase
-      ("look at my screen") the user says to opt in per-query. OCR
-      (`vision/ocr.py`) is comparatively cheap and can likely stay
-      gated the same way rather than needing its own logic.
+- [x] **Gate vision (MiniCPM-V-2.6) behind relevance, don't run it on
+      every query.** Fixed (2026-07-13): `VisionSettings.trigger_keywords`
+      (default `screen, see, look, this, here`) added to
+      `config/schema.py` / `config/default_config.yaml`. In
+      `main.py`'s `_build_prompt_with_screen_context()`, a case-insensitive
+      substring check against the transcribed/debug text now runs before
+      `screen_capture.capture()` is ever called — no match, no capture, no
+      captioning, no OCR. Empty list = old always-on behavior, kept as an
+      escape hatch. Chose the keyword heuristic (option (a)) over an
+      explicit trigger phrase (option (b)) — see `docs/DECISIONS.md`.
+      **Not yet verified on real hardware** — needs a real-mic run to
+      confirm keyword-matched queries still trigger vision correctly and
+      non-matched queries skip it (and stay fast).
 - [ ] **Startup timing still not measured on real hardware.** Flagged
       since Milestone 3/4 — five models now load eagerly at launch (wake
       word, Whisper, LLM, vision, OCR is cheap). Next launch: time from
