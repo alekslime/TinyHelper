@@ -136,7 +136,6 @@ sampling at multiple x-offsets from the edge.
       `tesseract_cmd`) plus the new `trigger_keywords`. Verified the merged
       `AppSettings` still matches schema defaults after the change.
 
-<<<<<<< HEAD
 ## Milestone 7 — Visual Guidance — IN PROGRESS
 
 Design (2026-07-13, refined through direct back-and-forth): instead of a
@@ -168,25 +167,55 @@ One box at a time, not a general shape/annotation system. See
       real-hardware pass to confirm the grammar actually produces valid,
       *semantically* sensible boxes (the grammar guarantees shape, not
       correctness — see the `locate()` docstring).
-- [ ] **Part B.2 — Generalize `GlowAuraRenderer` to trace an arbitrary
-      rectangle.** Currently only traces the 4 screen edges. Needs a
-      `target_rect` concept (screen bounds by default) and a geometry
-      morph animation (screen edges → box edges), reusing the existing
-      `QVariantAnimation` cross-fade pattern from Milestone 6's color
-      transitions.
+- [x] **Part B.2 — Generalize `GlowAuraRenderer` to trace an arbitrary
+      rectangle.** `aura/renderer/base.py`: added `show_target_box(x, y,
+      w, h)` / `clear_target_box()` to the `AuraRenderer` interface (with
+      the untrusted-input contract documented on `show_target_box`).
+      `aura/renderer/null_renderer.py` and `aura/controller.py`: log-only
+      / passthrough implementations, completing the interface contract.
+      `aura/renderer/glow_renderer.py`: `_build_blurred_mask()`
+      generalized to take a `target_rect` and draw the 4 seed bands along
+      *its* edges instead of always the canvas's; `_AuraOverlayWidget`
+      gained `_target_rect` + `set_target_rect()` and a rect-aware mask
+      cache key. `GlowAuraRenderer` gained `_screen_rect` (the "home"
+      rect), a second `QVariantAnimation` (`_rect_animation`,
+      `BOX_TRANSITION_MS` = 600ms, separate from the color fade's
+      `TRANSITION_MS`) morphing `_current_rect` between the screen edge
+      and a target box, and `show_target_box()`/`clear_target_box()`
+      themselves. `_clamp_target_rect()` defensively clamps untrusted
+      `(x, y, w, h)` (e.g. straight from `locate()`) to stay fully
+      on-screen with each dimension at least `MIN_BOX_SIZE_PX` — a
+      caller can't hang a box off the screen edge or shrink it into a
+      degenerate blob.
+      **Verified for real** (this sandbox has no display but does have
+      Xvfb/`QT_QPA_PLATFORM=offscreen`, same approach as Milestone 6):
+      constructed a real `GlowAuraRenderer` + `QApplication`, called
+      `show_target_box()`/`clear_target_box()` through the real
+      `AuraController`, pumped the Qt event loop through the real
+      600ms animation, and read back actual painted mask pixels —
+      confirmed the blurred band sits at the target rect's edge (alpha
+      94) and not its center (alpha 0), confirmed the rect lands exactly
+      on the requested box, confirmed `clear_target_box()` returns
+      exactly to the screen rect, and confirmed an out-of-bounds/
+      undersized box (`x=-500, y=-500, w=3, h=3`) gets clamped fully
+      on-screen at `MIN_BOX_SIZE_PX`. Also confirmed `NullAuraRenderer`
+      still instantiates (proves both concrete renderers satisfy the new
+      abstract methods) and that a `set_state()` color change still works
+      independently of an active target box. Not a mock/fake test — real
+      Qt widgets, real `QGraphicsBlurEffect`, real animation playback.
 - [ ] **Part B.3 — Wiring.** `found=True` → new `show_target_box(x, y, w,
       h)` on the aura controller (percent-to-pixel conversion happens
       here, using the known screen-capture geometry). `found=False` /
       parse failure → `AuraState.ERROR` (already red, already wired) +
-      a reply asking the user if they want to try again.
+      a reply asking the user if they want to try again. Not started —
+      `main.py` doesn't call `VisionModel.locate()` or
+      `AuraController.show_target_box()`/`clear_target_box()` yet.
 - [ ] **Part B.4 — Reverting to full-screen edges.** Two triggers: (1)
       the next query comes in, (2) the cursor dwells inside the target
       box for ~4 seconds (matches the existing breathing-pulse period —
       needs a `QTimer` polling `QCursor.pos()` against the box rect, or
       an event filter).
 
-=======
->>>>>>> 7cf67005d3ee82daab4ff06c8b0f88bdee7c755a
 ## Loose ends / small items
 
 - [x] **Fixed: Whisper transcription crashed permanently on real hardware

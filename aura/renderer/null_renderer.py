@@ -30,6 +30,12 @@ class NullAuraRenderer(AuraRenderer):
         logger.debug("Aura state change: %s -> %s", self._state.value, state.value)
         self._state = state
 
+    def show_target_box(self, x: int, y: int, w: int, h: int) -> None:
+        logger.debug("NullAuraRenderer.show_target_box(%d, %d, %d, %d) called (no-op).", x, y, w, h)
+
+    def clear_target_box(self) -> None:
+        logger.debug("NullAuraRenderer.clear_target_box() called (no-op).")
+
     def show(self) -> None:
         self._visible = True
         logger.debug("NullAuraRenderer.show() called (no-op).")

@@ -722,7 +722,6 @@ tune the vision model. Resynced to the current GGUF-based fields
 `caption_prompt`) plus the new `trigger_keywords`, `ocr_enabled`,
 `ocr_min_confidence`, `tesseract_cmd`. No schema change — `config/schema.py`
 was already correct; only the bundled yaml was stale.
-<<<<<<< HEAD
 
 ## Milestone 7: Aura morphs to trace a target box, not a generic overlay layer (2026-07-13)
 
@@ -791,5 +790,30 @@ actually run MiniCPM-V-2.6 inference. Real-hardware verification needs to
 confirm the grammar produces not just valid JSON but *sensible* boxes on
 real screenshots, per the "constrains structure, not semantics" note
 above.
-=======
->>>>>>> 7cf67005d3ee82daab4ff06c8b0f88bdee7c755a
+
+**Part B.2 (renderer generalization) reuses Milestone 6's mask/animation
+machinery rather than introducing new ones:** `_build_blurred_mask()`
+already took a canvas size and drew 4 edge bands into it; it now also
+takes a `target_rect` and draws those same 4 bands along *that* rect's
+edges instead of the canvas's own, so it's the exact same function doing
+the exact same drawing — just parameterized. The geometry morph
+(`_rect_animation`) mirrors the existing color cross-fade
+(`_animation`/`TRANSITION_MS`) almost exactly, down to reusing
+`QEasingCurve.Type.OutCubic`, deliberately, rather than inventing a new
+animation shape for what's conceptually the same "ease from A to B"
+pattern. The two animations are kept as separate `QVariantAnimation`
+instances with separate durations (`BOX_TRANSITION_MS` = 600ms vs.
+`TRANSITION_MS` = 500ms) since color and geometry are orthogonal and
+there's no reason a state change and a target-box change should be
+forced to animate at the same speed.
+
+**Clamping lives in the renderer, not the caller:** `_clamp_target_rect()`
+sits inside `GlowAuraRenderer` rather than being pushed onto whatever
+calls `show_target_box()` (Part B.3's `main.py` wiring, eventually).
+Reasoning: `AuraRenderer.show_target_box()`'s contract is explicitly
+"coordinates are untrusted" (see its docstring in `base.py`) — the
+renderer is the one thing that actually knows the legal bounds (its own
+`_screen_rect`, `MIN_BOX_SIZE_PX`), so it's the natural place to enforce
+them, and it means *any* future caller (not just Part B.3's `locate()`
+wiring) gets the same safety for free rather than having to remember to
+clamp before calling.
