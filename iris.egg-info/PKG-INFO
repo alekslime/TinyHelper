@@ -3,9 +3,10 @@ Name: iris
 Version: 0.1.0
 Summary: Iris — a fully local, voice-first AI desktop copilot for Windows.
 Author: Iris Project
-License: MIT
+License: Proprietary
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
+License-File: LICENSE
 Requires-Dist: PySide6>=6.7.0
 Requires-Dist: pydantic>=2.7.0
 Requires-Dist: PyYAML>=6.0.1
@@ -30,8 +31,9 @@ Requires-Dist: pytest>=8.2.0; extra == "dev"
 Requires-Dist: black>=24.4.0; extra == "dev"
 Requires-Dist: ruff>=0.4.0; extra == "dev"
 Requires-Dist: mypy>=1.10.0; extra == "dev"
+Dynamic: license-file
 
-# Iris
+# Iris - WORKING!!!!!!!!!!!!!!!!!!!!!!!!
 
 A fully local, voice-first AI desktop copilot for Windows.
 
@@ -42,12 +44,15 @@ it with local models, and guides you visually and by voice.
 
 ## Status
 
-🚧 Early development. Milestone 5 (screen capture + vision) complete in
-code; both it and Milestone 4's LLM generation are still pending
-verification on real hardware with real internet access — see
-[`docs/TODO.md`](docs/TODO.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md)
-for what's done and what's next. [`HANDOFF.md`](HANDOFF.md) has the full
-current state for anyone (human or AI) picking up development.
+🚧 Early development. Milestone 5 (screen capture + vision) is complete
+and working on real hardware, using MiniCPM-V-2.6 (via llama.cpp) for
+scene description plus Tesseract OCR for verbatim on-screen text —
+see [`HANDOFF.md`](HANDOFF.md) for the latest state. Some
+verification items are still open (see [`docs/TODO.md`](docs/TODO.md)),
+and a few docs there still describe an earlier ONNX-based version of the
+vision model — `HANDOFF.md` is the source of truth until those are
+refreshed. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's done and
+what's next.
 
 ## Core principles
 
@@ -67,8 +72,8 @@ Developed and tuned for:
 
 ## Tech stack
 
-Python 3.12+, PySide6, llama.cpp (text LLM + moondream2 vision model),
-Faster-Whisper, OpenWakeWord, MSS, OpenCV, Tesseract OCR (optional), SQLite.
+Python 3.12+, PySide6, llama.cpp (LLM + MiniCPM-V-2.6 vision), Faster-Whisper,
+OpenWakeWord, MSS, OpenCV, Tesseract OCR, SQLite.
 
 ## Getting started (development)
 
@@ -114,10 +119,9 @@ handling works as before, and the response window just shows a
 "no LLM configured" placeholder instead of a generated reply.
 
 To also enable screen-context awareness (Iris looks at a screenshot and
-folds a short description into the prompt): install the `vision` extra,
-**and** turn it on in config — it's opt-in and off by default even with
-the extra installed, since it involves reading your screen (see
-`docs/DECISIONS.md`):
+folds a short caption into the prompt): install the `vision` extra, **and**
+turn it on in config — it's opt-in and off by default even with the extra
+installed, since it involves reading your screen (see `docs/DECISIONS.md`):
 
 ```bash
 pip install -e ".[speech,llm,vision]"
@@ -129,40 +133,9 @@ vision:
   enabled: true
 ```
 
-The default vision model is `vikhyatk/moondream2` (a small vision-
-language model, loaded via `llama-cpp-python`), downloaded and cached on
-first use, same pattern as the LLM. Without `vision.enabled: true`, Iris
-never captures the screen at all, regardless of which extras are
-installed.
-
-**Optional: on-screen text extraction (OCR).** Alongside the vision
-model's description, Iris can also run OCR (via `pytesseract`) on each
-screenshot and fold the literal extracted text into the prompt — useful
-for reading error messages, code, or other on-screen text verbatim.
-This is a second, separate opt-in on top of `vision.enabled`, because it
-needs a real Tesseract OCR engine installed on your system — `pytesseract`
-is only a Python wrapper around it, not the engine itself:
-
-1. Install the Tesseract binary:
-   - **Windows:** download and run the installer from
-     [UB-Mannheim's Tesseract build](https://github.com/UB-Mannheim/tesseract/wiki),
-     then either add its install directory to `PATH` or set
-     `vision.tesseract_cmd` in `config.yaml` to the full path of
-     `tesseract.exe`.
-   - **macOS:** `brew install tesseract`
-   - **Linux:** `apt install tesseract-ocr` (or your distro's equivalent)
-2. Turn it on in config:
-
-   ```yaml
-   vision:
-     enabled: true
-     ocr_enabled: true
-     # tesseract_cmd: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"  # only if not on PATH
-   ```
-
-If `ocr_enabled: true` but Tesseract isn't actually installed, Iris logs
-a clear error and continues without OCR text rather than crashing — same
-graceful-degradation pattern as everything else in this list.
+The default captioning model (~250MB, ONNX) downloads and caches on first
+use, same as the LLM. Without `vision.enabled: true`, Iris never captures
+the screen at all, regardless of which extras are installed.
 
 Everything, including the Windows-only and dev-tooling extras:
 
