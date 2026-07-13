@@ -1,5 +1,8 @@
 """Screen understanding via `MiniCPM-V-2.6` (Milestone 5, rework 2026-07-13
-part 2).
+part 4 -- reverted to MiniCPM-V-2.6 after confirming moondream2's
+single-tile 378x378 encoder can't resolve dense screen/code text; the
+laptop target accepts slower CPU-only inference in exchange for actually
+usable scene descriptions).
 
 Turns a screenshot into a short text description that `main.py` can fold
 into the LLM prompt (see `docs/DECISIONS.md`). Knows nothing about screen
@@ -7,15 +10,18 @@ capture, Aura, or the LLM -- takes a PIL image in, returns a description
 string out, the same "one thing in, one thing out" shape as `llm/engine.py`
 and `speech/transcriber.py`.
 
-**Why MiniCPM-V-2.6, not moondream2:** moondream2 (~1.8B) worked -- no
-more hallucinated photo captions -- but its descriptions of screenshots
-stayed shallow (generic app/window guesses, no real reading of on-screen
-text or UI detail). MiniCPM-V-2.6 is an 8B model (SigLip-400M vision
-encoder + Qwen2-7B) built specifically for document/UI/OCR-heavy
-understanding, and benchmarks meaningfully above moondream2's weight
-class on exactly this kind of task. The cost is size: ~5.7GB total
-(text model + mmproj) vs moondream2's ~3.75GB, and slower per-query
-generation on CPU. Worth it for "actually tell me what's on my screen."
+**Why MiniCPM-V-2.6, not moondream2:** moondream2 (~1.8B) is a single-tile
+encoder -- it squashes the whole screenshot down to 378x378 before
+"reading" it, which destroys legibility of anything but the coarsest
+screen content (a 1920x1080 code editor becomes unreadable mush at that
+resolution). MiniCPM-V-2.6 is an 8B model (SigLip-400M vision encoder +
+Qwen2-7B) with adaptive image slicing, built specifically for
+document/UI/OCR-heavy understanding, and benchmarks meaningfully above
+moondream2's weight class on exactly this kind of task. The cost is size:
+~5.7GB total (text model + mmproj) vs moondream2's ~3.75GB, and
+significantly slower per-query generation on CPU (~40s+ per screenshot
+on the i7-6820HQ laptop target) -- accepted tradeoff for "actually tell
+me what's on my screen" over speed.
 
 Loaded via `llama-cpp-python`'s built-in `MiniCPMv26ChatHandler` -- no
 new heavy dependency beyond what `llm/engine.py` already needs. Weights
@@ -23,6 +29,16 @@ are pulled from `openbmb/MiniCPM-V-2_6-gguf` on Hugging Face Hub via
 `Llama.from_pretrained()` / `MiniCPMv26ChatHandler.from_pretrained()` on
 first use and cached locally after that, same download-once pattern as
 `llm/engine.py`.
+
+IMPORTANT: the chat handler class must match the model family actually
+being loaded -- `MiniCPMv26ChatHandler` builds MiniCPM-V's own chat
+template and expects its own vision-projector output shape. Pointing a
+different model's GGUF weights at the wrong handler (e.g. moondream2
+weights through `MiniCPMv26ChatHandler`, or vice versa) silently produces
+garbage image embeddings and hallucinated, image-unrelated output -- it
+will not raise an error, it will just be wrong. (This is exactly what
+happened during the 2026-07-13 moondream2 experiment on this repo -- see
+git history.)
 """
 
 from __future__ import annotations
@@ -46,12 +62,11 @@ DEFAULT_MMPROJ_FILENAME = "mmproj-model-f16.gguf"
 # MiniCPM-V's own docs use -c 4096 for image + prompt; moondream2 got by
 # with 2048, but MiniCPM's larger vision encoder needs the extra room.
 DEFAULT_N_CTX = 4096
-# NOTE: same reasoning as the moondream2 version this replaces -- defaults
-# to CPU (0), not -1. The mmproj/image-embedding path inside
-# llama-cpp-python's chat handler has its own, less-configurable GPU flag
-# separate from this `n_gpu_layers` value. Combined with the main LLM's
-# VRAM usage (see llm/engine.py), there usually isn't spare VRAM for this
-# model too on an 8GB card anyway -- see docs/DECISIONS.md before changing.
+# NOTE: defaults to CPU (0), not -1. The mmproj/image-embedding path
+# inside llama-cpp-python's chat handler has its own, less-configurable
+# GPU flag separate from this `n_gpu_layers` value. Combined with the
+# main LLM's VRAM usage, there usually isn't spare VRAM for this model
+# too on a 4GB card anyway -- see docs/DECISIONS.md before changing.
 DEFAULT_N_GPU_LAYERS = 0
 DEFAULT_MAX_TOKENS = 256
 DEFAULT_SYSTEM_PROMPT = "You are an assistant who perfectly describes images."
@@ -171,7 +186,15 @@ class VisionModel:
                 ],
             },
         ]
-        result = self._model.create_chat_completion(messages=messages, max_tokens=max_tokens)
+        # Low temperature on purpose: this is a grounded "what's actually
+        # there" description, not creative writing. Left at the library
+        # default (higher, more random), two calls on the same screenshot
+        # can produce meaningfully different captions -- including
+        # confident-sounding hallucinated details -- which makes the
+        # output impossible to trust or debug.
+        result = self._model.create_chat_completion(
+            messages=messages, max_tokens=max_tokens, temperature=0.1
+        )
         content = result["choices"][0]["message"]["content"]
         text = content.strip() if content else ""
 
