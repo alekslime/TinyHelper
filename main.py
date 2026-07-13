@@ -198,6 +198,16 @@ def main() -> int:
         # nice-to-have, never worth failing the whole query over.
         if screen_capture is None or (vision_model is None and ocr_reader is None):
             return text
+
+        keywords = settings.vision.trigger_keywords
+        if keywords and not any(kw.lower() in text.lower() for kw in keywords):
+            logger.debug(
+                "Skipping screen context — query matched none of vision.trigger_keywords %r",
+                keywords,
+            )
+            return text
+        logger.debug("Screen context triggered by keyword match in query: %r", text)
+
         try:
             image = screen_capture.capture()
         except Exception:

@@ -55,12 +55,19 @@ vision:
   monitor_index: 0  # 0 = all monitors combined; 1, 2, ... = a single monitor
   save_debug_screenshots: false  # developer aid only -- screenshots are discarded after use by default
   debug_screenshot_dir: null  # null = <app data dir>/data/debug_screenshots
-  repo_id: Xenova/vit-gpt2-image-captioning  # ONNX-exported ViT encoder + GPT-2 decoder captioning model
-  encoder_filename: onnx/encoder_model.onnx
-  decoder_filename: onnx/decoder_model.onnx
-  tokenizer_filename: tokenizer.json
-  local_model_dir: null  # set to bypass the Hub download entirely and load local ONNX/tokenizer files
-  max_new_tokens: 30
+  repo_id: moondream/moondream2-gguf  # HF repo for GGUF text-model + mmproj weights, if local_*_path is unset
+  model_filename: moondream2-text-model-f16.gguf
+  mmproj_filename: moondream2-mmproj-f16.gguf
+  local_model_path: null  # set to bypass the Hub download and load a local GGUF text-model file
+  local_mmproj_path: null  # required alongside local_model_path
+  n_ctx: 2048  # context window for the vision model (image embeddings consume context)
+  n_gpu_layers: 0  # GPU layers to offload for the vision model's text half. -1 = all
+  max_tokens: 256  # max tokens generated per screenshot description
+  caption_prompt: "Describe what's on this screen concisely, focusing on any visible application windows, UI elements, and what the user appears to be doing."
+  trigger_keywords: [screen, see, look, this, here]  # vision only runs if the query contains one of these (case-insensitive); [] = always run
+  ocr_enabled: true  # also run Tesseract OCR for verbatim on-screen text, alongside the scene description
+  ocr_min_confidence: 60.0  # minimum per-word Tesseract confidence (0-100) to include a word in OCR output
+  tesseract_cmd: null  # full path to the tesseract executable, if it isn't on PATH
 
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

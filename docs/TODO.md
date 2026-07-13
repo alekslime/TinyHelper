@@ -122,6 +122,20 @@ sampling at multiple x-offsets from the edge.
       resize (which should be rare for a full-screen overlay), but hasn't
       been measured on real target hardware.
 
+- [x] **Fixed: `config/default_config.yaml`'s `vision:` section was stale
+      (2026-07-13).** Still had the original ONNX/Xenova captioning fields
+      (`encoder_filename`, `decoder_filename`, `tokenizer_filename`,
+      `local_model_dir`, `max_new_tokens`) from before the moondream2 →
+      MiniCPM-V-2.6 rework (see `docs/DECISIONS.md`). Harmless in practice
+      — Pydantic silently falls back to `VisionSettings`' schema defaults
+      for anything the yaml doesn't provide — but misleading for anyone
+      editing the bundled yaml expecting those fields to do something.
+      Replaced with the current GGUF fields (`repo_id`, `model_filename`,
+      `mmproj_filename`, `local_model_path`, `local_mmproj_path`, `n_ctx`,
+      `n_gpu_layers`, `max_tokens`, `caption_prompt`, `ocr_*`,
+      `tesseract_cmd`) plus the new `trigger_keywords`. Verified the merged
+      `AppSettings` still matches schema defaults after the change.
+
 ## Loose ends / small items
 
 - [x] **Fixed: Whisper transcription crashed permanently on real hardware
@@ -202,18 +216,19 @@ sampling at multiple x-offsets from the edge.
       time to startup — worth timing on real hardware and reconsidering
       lazy-loading if it's noticeably slow.
 
-- [ ] **Gate vision (MiniCPM-V-2.6) behind relevance, don't run it on
-      every query.** Confirmed working and reasonably accurate on real
-      hardware (2026-07-13), but it's CPU-only (`n_gpu_layers=0` — no
-      spare VRAM alongside the main LLM on the 3070 Ti's 8GB) and 8B
-      params, so running it unconditionally on every transcribed query
-      trades real latency for context most queries won't need. Plan:
-      either (a) a keyword heuristic in `main.py` on the transcribed text
-      before calling `_build_prompt_with_screen_context` (e.g. "screen",
-      "this", "here", "see", "look"), or (b) an explicit trigger phrase
-      ("look at my screen") the user says to opt in per-query. OCR
-      (`vision/ocr.py`) is comparatively cheap and can likely stay
-      gated the same way rather than needing its own logic.
+- [x] **Gate vision (MiniCPM-V-2.6) behind relevance, don't run it on
+      every query.** Fixed (2026-07-13): `VisionSettings.trigger_keywords`
+      (default `screen, see, look, this, here`) added to
+      `config/schema.py` / `config/default_config.yaml`. In
+      `main.py`'s `_build_prompt_with_screen_context()`, a case-insensitive
+      substring check against the transcribed/debug text now runs before
+      `screen_capture.capture()` is ever called — no match, no capture, no
+      captioning, no OCR. Empty list = old always-on behavior, kept as an
+      escape hatch. Chose the keyword heuristic (option (a)) over an
+      explicit trigger phrase (option (b)) — see `docs/DECISIONS.md`.
+      **Not yet verified on real hardware** — needs a real-mic run to
+      confirm keyword-matched queries still trigger vision correctly and
+      non-matched queries skip it (and stay fast).
 - [ ] **Startup timing still not measured on real hardware.** Flagged
       since Milestone 3/4 — five models now load eagerly at launch (wake
       word, Whisper, LLM, vision, OCR is cheap). Next launch: time from

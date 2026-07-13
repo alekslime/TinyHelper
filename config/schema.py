@@ -247,6 +247,17 @@ class VisionSettings(BaseModel):
         ),
         description="Prompt sent to the vision model alongside each screenshot.",
     )
+    trigger_keywords: list[str] = Field(
+        default_factory=lambda: ["screen", "see", "look", "this", "here"],
+        description=(
+            "When vision.enabled is true, screen capture + captioning only "
+            "run if the transcribed/debug query contains at least one of "
+            "these keywords (case-insensitive substring match). Keeps "
+            "vision's real per-query latency (MiniCPM-V is CPU-only) from "
+            "being paid on queries that don't need screen context. Set to "
+            "an empty list to run vision on every query (old behavior)."
+        ),
+    )
     ocr_enabled: bool = Field(
         default=True,
         description="Whether to also run Tesseract OCR for verbatim on-screen text, alongside the scene description.",
