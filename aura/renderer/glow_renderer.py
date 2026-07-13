@@ -10,15 +10,15 @@ pipeline -- see docs/DECISIONS.md for why this still satisfies the
 roadmap's "GPU-rendered ambient edge glow" goal without a much heavier
 OpenGL/QML dependency.
 
-Visual model (2026-07-11 rewrite, replacing the gradient-stack approach):
-a solid-color band is painted along each edge, then blurred with Qt's
-`QGraphicsBlurEffect` -- a real Gaussian blur, not a manually tuned
-multi-stop gradient. This is a genuinely different rendering technique
-from the previous version: no hand-picked falloff curve, no separate
-corner patches to avoid seams (blur handles corners for free), just "draw
-a shape, blur it." The blurred shape (a `QImage`) is cached and only
-rebuilt on resize; per-frame work is just re-tinting that cached shape to
-the current color/brightness, which is cheap.
+Visual model (2026-07-13 rewrite, corner-weighted): most of the visible
+glow now lives in soft radial blobs seeded at the four corners, connected
+by a thin seed band along each edge -- rather than a uniform band running
+the full length of every edge. The seed shape (corner blobs + thin edge
+band) is still blurred with Qt's `QGraphicsBlurEffect`, a real Gaussian
+blur, not a manually tuned multi-stop gradient. The blurred shape (a
+`QImage`) is cached and only rebuilt on resize; per-frame work is just
+re-tinting that cached shape to the current color/brightness, which is
+cheap.
 
 Design constraints from docs/ROADMAP.md, honored here:
     - State-based color transitions (idle/listening/thinking/waiting/error)
@@ -35,8 +35,8 @@ import logging
 import math
 import time
 
-from PySide6.QtCore import QEasingCurve, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene, QWidget
 
 from aura.renderer.base import AuraRenderer
@@ -44,15 +44,20 @@ from aura.states import DEFAULT_STATE_COLORS, AuraState
 
 logger = logging.getLogger(__name__)
 
-# Width of the solid seed band painted along each edge before blurring.
-# This is the "shape" that then gets blurred into a glow -- not the final
-# visible width, which ends up wider once blur spreads it.
-SEED_BAND_PX = 18  # was 55; cut down, was eating too much of the screen
+# Width of the thin seed band painted along each edge before blurring.
+# This is just a faint connecting line between corners now -- most of the
+# visible glow comes from the corner blobs below, not this band.
+EDGE_BAND_PX = 15  # was SEED_BAND_PX = 18; kept thin on purpose
+
+# Pre-blur radius of the soft radial blob seeded at each corner. This is
+# where most of the glow actually lives -- the corner-weighted look.
+CORNER_BLOB_PX = 130
 
 # Qt blur radius (roughly, the blur's standard deviation in pixels). This
-# is what actually determines how far and how softly the glow spreads --
-# and was the main reason the glow reached so far inward before.
-BLUR_RADIUS_PX = 38  # was 90; cut down alongside SEED_BAND_PX
+# is what actually determines how far and how softly the glow spreads.
+# Kept lower than the old uniform-band version so the result reads as
+# thin rather than a thick wash along each edge.
+BLUR_RADIUS_PX = 26  # was 38
 
 # Peak alpha (0-255) of the tint applied to the blurred shape, before the
 # breathing multiplier is applied.
@@ -82,22 +87,35 @@ def _vivid(color: QColor) -> QColor:
 
 
 def _build_blurred_mask(width: int, height: int) -> QImage:
-    """Paint a solid white band along all four edges and blur it with a
-    real Gaussian blur (`QGraphicsBlurEffect`). The result is a shape-only
-    mask (white, varying alpha) -- color is applied later, per frame, via
-    `_tint()`, so this expensive part only has to run once per size.
+    """Paint a thin white band along all four edges plus a soft radial
+    blob at each corner, then blur it with a real Gaussian blur
+    (`QGraphicsBlurEffect`). The result is a shape-only mask (white,
+    varying alpha) -- color is applied later, per frame, via `_tint()`,
+    so this expensive part only has to run once per size.
+
+    Corner-weighted on purpose: the blobs carry most of the visible glow,
+    the edge band is just a thin connecting line, not a second glow
+    source competing with it.
     """
     seed = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     seed.fill(0)
     painter = QPainter(seed)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
+
     painter.setBrush(QColor(255, 255, 255, 255))
-    band = SEED_BAND_PX
+    band = EDGE_BAND_PX
     painter.drawRect(0, 0, width, band)
     painter.drawRect(0, height - band, width, band)
     painter.drawRect(0, 0, band, height)
     painter.drawRect(width - band, 0, band, height)
+
+    for cx, cy in ((0, 0), (width, 0), (0, height), (width, height)):
+        gradient = QRadialGradient(cx, cy, CORNER_BLOB_PX)
+        gradient.setColorAt(0.0, QColor(255, 255, 255, 255))
+        gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(gradient)
+        painter.drawEllipse(QPointF(cx, cy), CORNER_BLOB_PX, CORNER_BLOB_PX)
     painter.end()
 
     scene = QGraphicsScene()
