@@ -10,18 +10,21 @@ pipeline -- see docs/DECISIONS.md for why this still satisfies the
 roadmap's "GPU-rendered ambient edge glow" goal without a much heavier
 OpenGL/QML dependency.
 
-Visual model (2026-07-13 rewrite, replacing the flat-tint approach):
+Visual model (2026-07-13 rewrite, replacing the flat-tint approach; widened
+to a full-wheel pastel sweep later the same day):
 the blurred edge-band shape is unchanged from the previous version (see
 `_build_blurred_mask()`), but instead of re-tinting it to a single flat
 color per frame, it's re-tinted with a `QConicalGradient` centered on the
-screen: a handful of color stops orbit the current state's base hue
-(spread +/- `GRADIENT_HUE_SPREAD_DEG` degrees, wrapping back to the base
-hue so the loop has no seam), and the gradient's angle slowly rotates
-over time. The net effect is a multicolor glow that continuously drifts
-through nearby hues around the border, while still visibly anchored to
-whatever color the current `AuraState` maps to -- state changes cross-fade
-the *anchor* hue (see `_shortest_hue_delta()`), the rotation and spread
-keep animating underneath that the whole time.
+screen: stops sweep through the *entire* hue wheel (+/- 180 degrees around
+the current state's base hue -- i.e. all the way around, not a narrow
+band), at low saturation/high value so every hue reads as pastel rather
+than neon. The gradient's angle continuously rotates, so the effect is a
+full-spectrum pastel wash smoothly circling the border. State is still
+reflected -- the anchor hue (where the sweep's start/end seam sits) cross-
+fades between states (see `_shortest_hue_delta()`) -- but since the sweep
+already spans every hue, a state change now reads mainly as a shift in
+*which hue is currently at a given angle* rather than a change in the
+overall palette, which stays a continuous pastel rainbow throughout.
 
 Design constraints from docs/ROADMAP.md, honored here:
     - State-based color transitions (idle/listening/thinking/waiting/error)
