@@ -207,15 +207,15 @@ class VisionSettings(BaseModel):
         ),
     )
     repo_id: str = Field(
-        default="openbmb/MiniCPM-V-2_6-gguf",
-        description="Hugging Face repo to pull MiniCPM-V-2.6 GGUF files from, if local_model_path is unset.",
+        default="moondream/moondream2-gguf",
+        description="Hugging Face repo to pull moondream2 GGUF files from, if local_model_path is unset.",
     )
     model_filename: str = Field(
-        default="ggml-model-Q4_K_M.gguf",
+        default="moondream2-text-model-f16.gguf",
         description="GGUF text-model filename within repo_id.",
     )
     mmproj_filename: str = Field(
-        default="mmproj-model-f16.gguf",
+        default="moondream2-mmproj-f16.gguf",
         description="GGUF mmproj (vision projector) filename within repo_id.",
     )
     local_model_path: str | None = Field(
@@ -227,9 +227,9 @@ class VisionSettings(BaseModel):
         description="Path to a local GGUF mmproj file. Required alongside local_model_path.",
     )
     n_ctx: int = Field(
-        default=4096,
+        default=2048,
         ge=1,
-        description="Context window for the vision model (image embeddings consume context; MiniCPM-V's own docs use 4096).",
+        description="Context window for the vision model (image embeddings consume context).",
     )
     n_gpu_layers: int = Field(
         default=0,
@@ -258,7 +258,6 @@ class VisionSettings(BaseModel):
             "an empty list to run vision on every query (old behavior)."
         ),
     )
-<<<<<<< HEAD
     locate_trigger_keywords: list[str] = Field(
         default_factory=lambda: ["where", "find", "point", "show me", "locate"],
         description=(
@@ -271,34 +270,6 @@ class VisionSettings(BaseModel):
             "to an empty list to attempt locate() on every query."
         ),
     )
-=======
-<<<<<<< HEAD
-    locate_trigger_keywords: list[str] = Field(
-        default_factory=lambda: [
-            "where is",
-            "where's",
-            "point to",
-            "point at",
-            "show me where",
-            "find the",
-            "highlight the",
-            "which button",
-            "locate the",
-        ],
-        description=(
-            "Milestone 7: when vision.enabled is true and the query matches "
-            "one of these (case-insensitive substring match), Iris calls "
-            "VisionModel.locate() and morphs Aura's outline to trace the "
-            "found element instead of running normal LLM generation -- see "
-            "docs/DECISIONS.md. Checked independently of trigger_keywords "
-            "above (a locate-triggered query does not also need to match "
-            "trigger_keywords). Set to an empty list to disable the "
-            "locate flow entirely, even when vision.enabled is true."
-        ),
-    )
-=======
->>>>>>> e2362707338d13541ed6704fe96c939f88592a87
->>>>>>> 5b2c291bc460334a015110c8d96fb071ae4ebdcd
     ocr_enabled: bool = Field(
         default=True,
         description="Whether to also run Tesseract OCR for verbatim on-screen text, alongside the scene description.",

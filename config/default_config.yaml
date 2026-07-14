@@ -55,33 +55,17 @@ vision:
   monitor_index: 0  # 0 = all monitors combined; 1, 2, ... = a single monitor
   save_debug_screenshots: false  # developer aid only -- screenshots are discarded after use by default
   debug_screenshot_dir: null  # null = <app data dir>/data/debug_screenshots
-<<<<<<< HEAD
-  repo_id: openbmb/MiniCPM-V-2_6-gguf  # HF repo for MiniCPM-V-2.6 GGUF text-model + mmproj weights, if local_*_path is unset
-  model_filename: ggml-model-Q4_K_M.gguf
-  mmproj_filename: mmproj-model-f16.gguf
-  local_model_path: null  # set to bypass the Hub download and load a local GGUF text-model file
-  local_mmproj_path: null  # required alongside local_model_path
-  n_ctx: 4096  # context window for the vision model (image embeddings consume context; MiniCPM-V's own docs use 4096)
-=======
   repo_id: moondream/moondream2-gguf  # HF repo for GGUF text-model + mmproj weights, if local_*_path is unset
   model_filename: moondream2-text-model-f16.gguf
   mmproj_filename: moondream2-mmproj-f16.gguf
   local_model_path: null  # set to bypass the Hub download and load a local GGUF text-model file
   local_mmproj_path: null  # required alongside local_model_path
   n_ctx: 2048  # context window for the vision model (image embeddings consume context)
->>>>>>> e2362707338d13541ed6704fe96c939f88592a87
   n_gpu_layers: 0  # GPU layers to offload for the vision model's text half. -1 = all
   max_tokens: 256  # max tokens generated per screenshot description
   caption_prompt: "Describe what's on this screen concisely, focusing on any visible application windows, UI elements, and what the user appears to be doing."
   trigger_keywords: [screen, see, look, this, here]  # vision only runs if the query contains one of these (case-insensitive); [] = always run
-<<<<<<< HEAD
   locate_trigger_keywords: [where, find, point, show me, locate]  # locate() only runs if the query contains one of these (case-insensitive); [] = always attempt
-=======
-<<<<<<< HEAD
-  locate_trigger_keywords: [where is, "where's", point to, point at, show me where, find the, highlight the, which button, locate the]  # Milestone 7: triggers VisionModel.locate() + Aura target-box instead of normal LLM generation; [] = disable the locate flow
-=======
->>>>>>> e2362707338d13541ed6704fe96c939f88592a87
->>>>>>> 5b2c291bc460334a015110c8d96fb071ae4ebdcd
   ocr_enabled: true  # also run Tesseract OCR for verbatim on-screen text, alongside the scene description
   ocr_min_confidence: 60.0  # minimum per-word Tesseract confidence (0-100) to include a word in OCR output
   tesseract_cmd: null  # full path to the tesseract executable, if it isn't on PATH
