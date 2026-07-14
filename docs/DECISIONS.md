@@ -817,6 +817,7 @@ renderer is the one thing that actually knows the legal bounds (its own
 them, and it means *any* future caller (not just Part B.3's `locate()`
 wiring) gets the same safety for free rather than having to remember to
 clamp before calling.
+<<<<<<< HEAD
 
 ## Milestone 7, Part B.2: simplified from a morphing glow to a flashed rectangle outline (2026-07-14)
 
@@ -861,3 +862,92 @@ than mechanism: since the box now disappears on its own, B.4 becomes
 about calling `clear_target_box()` early (next query, cursor dwell)
 rather than "reverting to the full-screen edge," since there's no
 morph-back state left to revert to.
+=======
+<<<<<<< HEAD
+
+## Milestone 7 Part B.3: locate() bypasses normal LLM generation entirely (2026-07-14)
+
+A locate-triggered query ("where is the save button") does not also go
+through `llm_engine.generate()` -- `_locate_worker()` in `main.py` calls
+`VisionModel.locate()` and, on success, replies with a short templated
+"Found it -- {label}." rather than handing the vision model's answer to
+the text LLM to rephrase or comment on. Reasoning: `locate()`'s
+structured output already *is* the answer to "where is X" (a box to
+point at) -- running it through the text LLM afterward would add a
+second real-time CPU-bound inference pass (Qwen2.5, on top of the
+already-slow MiniCPM-V call) for a response that's mostly decorative.
+Revisit if user feedback wants a more conversational reply than the
+template -- `on_target_found()`/`on_target_not_found()` are the only two
+places that would need to change.
+
+**A separate `locate_trigger_keywords` setting, not reuse of
+`trigger_keywords`.** The existing `vision.trigger_keywords` decides "does
+this query care about the screen at all" (gating caption+OCR context
+folded into the LLM prompt). Part B.3 needed a different, more specific
+question: "does this query want Iris to point at something." Reusing
+`trigger_keywords` for both would mean every screen-context query (e.g.
+"what's on my screen") would also attempt `locate()`, which doesn't make
+sense for a query with no specific target. The two lists are checked
+independently in `on_transcribed()` -- a locate match doesn't require also
+matching `trigger_keywords`, and vice versa.
+
+**Percent→pixel conversion uses the *captured* monitor's geometry, not
+Aura's screen geometry.** `ScreenCapture` gained a `monitor_geometry`
+property (mss's own `left`/`top`/`width`/`height` dict for whatever
+`capture()` last grabbed) specifically so `_locate_worker()` converts
+`locate()`'s percent output using the region that was *actually*
+screenshotted -- not `GlowAuraRenderer`'s own `_screen_rect` (primary
+screen only, see its Milestone 6 note), which could be a different
+monitor or a different combined-virtual-screen size depending on
+`vision.monitor_index`. `GlowAuraRenderer.show_target_box()`'s existing
+clamping (Part B.2) is the safety net if the two disagree on a
+multi-monitor setup -- the box lands somewhere legal on Aura's actual
+overlay screen even if not pixel-perfect on a different monitor than the
+one that was captured. Properly aligning Aura's overlay to match
+`vision.monitor_index` (rather than always the primary screen) is a
+known follow-up, not solved here -- see `docs/TODO.md`.
+
+**Fixed vision config drift while here.** `config/schema.py` /
+`config/default_config.yaml`'s `vision.repo_id` / `model_filename` /
+`mmproj_filename` / `n_ctx` still had moondream2's values from before
+`vision/model.py`'s MiniCPM-V-2.6 rework -- a real, pre-existing bug
+(not introduced this session) that this session's testing surfaced
+while double-checking `VisionModel`'s config path for the `locate()`
+wiring. Left as `vision/model.py`'s own `DEFAULT_*` constants describe
+it (openbmb/MiniCPM-V-2_6-gguf, ggml-model-Q4_K_M.gguf,
+mmproj-model-f16.gguf, n_ctx=4096) -- see that module's docstring for
+why pairing the wrong weights with `MiniCPMv26ChatHandler` fails
+*silently* (garbage embeddings, not an error) rather than loudly, which
+is what made this worth fixing immediately rather than just noting for
+later.
+
+## Milestone 7 Part B.3 follow-up: reject degenerate zero-area locate() boxes (2026-07-14)
+
+Real bug, caught from an actual test run on real hardware (Premiere Pro,
+dual-monitor, MiniCPM-V-2.6): `locate()` returned `found=True` with
+`x=0, y=0, w=0, h=0` for "point to the export button on my left
+screen" -- the model's own answer was meaningless (no real box), but
+`GlowAuraRenderer.show_target_box()`'s existing clamping (Part B.2,
+which only guards against off-screen/undersized coordinates) inflated
+that zero-area box up to `MIN_BOX_SIZE_PX` and rendered a small box in
+the top-left corner as if it were a real detection -- see the screenshot
+in the session log. `_locate_worker()` in `main.py` now rejects
+`found=True` responses where `w <= 0 or h <= 0` and routes them through
+the same `report_not_found()` path as `found=False` -- a degenerate box
+is not a real answer, whatever the `found` flag says. This is exactly
+the caller-side sanity-checking `locate()`'s own docstring already calls
+for ("the model could still report a `found=True` box that doesn't
+actually correspond to anything real... Milestone 7's wiring should
+clamp/sanity-check the box before using it") -- just not yet done when
+Part B.3 first shipped.
+
+Whether the *underlying* zero-area answer was a genuine model failure
+(plausible -- MiniCPM-V-2.6 was asked to reason about a spatial concept,
+"my left screen," inside a full 3840x1080 combined-virtual-screen
+capture split into 8 tiled slices, which is a much harder grounding task
+than locating something within a single monitor's screenshot) is a
+separate, real-hardware tuning question, not something this fix
+addresses -- see `docs/TODO.md`'s note on `vision.monitor_index`.
+=======
+>>>>>>> e2362707338d13541ed6704fe96c939f88592a87
+>>>>>>> 5b2c291bc460334a015110c8d96fb071ae4ebdcd

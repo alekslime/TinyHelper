@@ -361,15 +361,43 @@ class GlowAuraRenderer(AuraRenderer):
     def initialize(self) -> None:
         self._widget = _AuraOverlayWidget()
 
-        screen = QGuiApplication.primaryScreen()
-        # NOTE: primary screen only -- a real multi-monitor glow spanning
-        # every display's combined virtual geometry is a known follow-up,
-        # not implemented yet. See docs/TODO.md.
-        geometry = screen.geometry() if screen is not None else None
+        # Span the full virtual desktop (the union of every connected
+        # screen's geometry), NOT just the primary screen. This has to
+        # match `mss`'s monitor_index=0 combined-virtual-screen geometry
+        # (what `vision.capture()` actually captures and `locate()`'s
+        # pixel math is computed against, per ScreenCapture.monitor_geometry)
+        # -- previously this was primaryScreen()-only, which meant a
+        # target box computed correctly for a non-primary monitor could
+        # never actually be drawn there: the overlay widget itself didn't
+        # extend that far, so show_target_box()'s own clamping silently
+        # forced it back onto the primary monitor instead. See the bug
+        # report where "point to X" resolved correctly but never visibly
+        # pointed at anything on a second monitor.
+        primary = QGuiApplication.primaryScreen()
+        geometry: QRect | None = None
+        if primary is not None:
+            # virtualGeometry() is the union of this screen's virtual
+            # siblings -- i.e. the same combined virtual-desktop rect mss
+            # calls monitor index 0. Falls back to a manual union of
+            # QGuiApplication.screens() if virtualGeometry() isn't
+            # available or returns something degenerate.
+            vg = primary.virtualGeometry()
+            if vg.isValid() and vg.width() > 0 and vg.height() > 0:
+                geometry = QRect(vg)
+
+        if geometry is None:
+            screens = QGuiApplication.screens()
+            if screens:
+                union_rect = QRect()
+                for s in screens:
+                    union_rect = union_rect.united(s.geometry())
+                if union_rect.width() > 0 and union_rect.height() > 0:
+                    geometry = union_rect
+
         if geometry is not None:
             self._widget.setGeometry(geometry)
         else:
-            logger.warning("No primary screen detected — Aura overlay using a fallback size.")
+            logger.warning("No screen geometry detected — Aura overlay using a fallback size.")
             self._widget.resize(1920, 1080)
 
         self._widget.set_anchor_hue(self._current_hue)

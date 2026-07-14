@@ -33,6 +33,25 @@ class ScreenCapture:
 
     def __init__(self, monitor_index: int = 0) -> None:
         self._monitor_index = monitor_index
+        # Milestone 7: the real (left, top, width, height) of whatever
+        # monitor/virtual-screen entry `capture()` last grabbed, in real
+        # screen pixels. `mss`'s monitor dict is exactly this shape
+        # already -- stored as-is rather than repackaged. None until the
+        # first capture() call. Needed by Part B.3's locate() wiring to
+        # convert the vision model's percent-of-screenshot coordinates
+        # back to real screen pixels. GlowAuraRenderer's overlay spans the
+        # full virtual desktop (matching monitor_index=0's combined
+        # geometry), so this and the overlay now agree on coordinate
+        # space -- see docs/DECISIONS.md.
+        self._last_monitor_geometry: dict[str, int] | None = None
+
+    @property
+    def monitor_geometry(self) -> dict[str, int] | None:
+        """The real screen geometry (`left`, `top`, `width`, `height`,
+        `mss`'s own dict shape) of the monitor/region `capture()` last
+        grabbed. `None` before the first successful `capture()` call.
+        """
+        return self._last_monitor_geometry
 
     def capture(self) -> Image.Image:
         """Grab a screenshot and return it as an in-memory RGB `PIL.Image`.
@@ -58,6 +77,7 @@ class ScreenCapture:
                     )
                 raw = sct.grab(monitors[self._monitor_index])
                 image = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+                self._last_monitor_geometry = dict(monitors[self._monitor_index])
         except Exception as exc:
             raise RuntimeError(f"Screen capture failed: {exc}") from exc
 
