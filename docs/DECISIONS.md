@@ -817,6 +817,7 @@ renderer is the one thing that actually knows the legal bounds (its own
 them, and it means *any* future caller (not just Part B.3's `locate()`
 wiring) gets the same safety for free rather than having to remember to
 clamp before calling.
+<<<<<<< HEAD
 
 ## Milestone 7 Part B.3: locate() bypasses normal LLM generation entirely (2026-07-14)
 
@@ -901,3 +902,5 @@ capture split into 8 tiled slices, which is a much harder grounding task
 than locating something within a single monitor's screenshot) is a
 separate, real-hardware tuning question, not something this fix
 addresses -- see `docs/TODO.md`'s note on `vision.monitor_index`.
+=======
+>>>>>>> e2362707338d13541ed6704fe96c939f88592a87

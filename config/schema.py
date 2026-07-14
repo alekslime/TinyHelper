@@ -258,6 +258,7 @@ class VisionSettings(BaseModel):
             "an empty list to run vision on every query (old behavior)."
         ),
     )
+<<<<<<< HEAD
     locate_trigger_keywords: list[str] = Field(
         default_factory=lambda: [
             "where is",
@@ -281,6 +282,8 @@ class VisionSettings(BaseModel):
             "locate flow entirely, even when vision.enabled is true."
         ),
     )
+=======
+>>>>>>> e2362707338d13541ed6704fe96c939f88592a87
     ocr_enabled: bool = Field(
         default=True,
         description="Whether to also run Tesseract OCR for verbatim on-screen text, alongside the scene description.",
