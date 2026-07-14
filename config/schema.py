@@ -207,15 +207,15 @@ class VisionSettings(BaseModel):
         ),
     )
     repo_id: str = Field(
-        default="moondream/moondream2-gguf",
-        description="Hugging Face repo to pull moondream2 GGUF files from, if local_model_path is unset.",
+        default="openbmb/MiniCPM-V-2_6-gguf",
+        description="Hugging Face repo to pull MiniCPM-V-2.6 GGUF files from, if local_model_path is unset.",
     )
     model_filename: str = Field(
-        default="moondream2-text-model-f16.gguf",
+        default="ggml-model-Q4_K_M.gguf",
         description="GGUF text-model filename within repo_id.",
     )
     mmproj_filename: str = Field(
-        default="moondream2-mmproj-f16.gguf",
+        default="mmproj-model-f16.gguf",
         description="GGUF mmproj (vision projector) filename within repo_id.",
     )
     local_model_path: str | None = Field(
@@ -227,9 +227,9 @@ class VisionSettings(BaseModel):
         description="Path to a local GGUF mmproj file. Required alongside local_model_path.",
     )
     n_ctx: int = Field(
-        default=2048,
+        default=4096,
         ge=1,
-        description="Context window for the vision model (image embeddings consume context).",
+        description="Context window for the vision model (image embeddings consume context; MiniCPM-V's own docs use 4096).",
     )
     n_gpu_layers: int = Field(
         default=0,
@@ -246,6 +246,40 @@ class VisionSettings(BaseModel):
             "application windows, UI elements, and what the user appears to be doing."
         ),
         description="Prompt sent to the vision model alongside each screenshot.",
+    )
+    trigger_keywords: list[str] = Field(
+        default_factory=lambda: ["screen", "see", "look", "this", "here"],
+        description=(
+            "When vision.enabled is true, screen capture + captioning only "
+            "run if the transcribed/debug query contains at least one of "
+            "these keywords (case-insensitive substring match). Keeps "
+            "vision's real per-query latency (MiniCPM-V is CPU-only) from "
+            "being paid on queries that don't need screen context. Set to "
+            "an empty list to run vision on every query (old behavior)."
+        ),
+    )
+    locate_trigger_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "where is",
+            "where's",
+            "point to",
+            "point at",
+            "show me where",
+            "find the",
+            "highlight the",
+            "which button",
+            "locate the",
+        ],
+        description=(
+            "Milestone 7: when vision.enabled is true and the query matches "
+            "one of these (case-insensitive substring match), Iris calls "
+            "VisionModel.locate() and morphs Aura's outline to trace the "
+            "found element instead of running normal LLM generation -- see "
+            "docs/DECISIONS.md. Checked independently of trigger_keywords "
+            "above (a locate-triggered query does not also need to match "
+            "trigger_keywords). Set to an empty list to disable the "
+            "locate flow entirely, even when vision.enabled is true."
+        ),
     )
     ocr_enabled: bool = Field(
         default=True,

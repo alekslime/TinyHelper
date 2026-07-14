@@ -33,6 +33,30 @@ class AuraRenderer(ABC):
         """Update the visual state Aura should represent (color/animation)."""
 
     @abstractmethod
+    def show_target_box(self, x: int, y: int, w: int, h: int) -> None:
+        """Morph Aura's outline from the full screen edge to trace a
+        specific rectangular screen region (Milestone 7), given in real
+        screen pixel coordinates with a top-left origin.
+
+        Coordinates originate from a vision model's output and are not
+        trusted as-is: implementations must clamp the rect to the screen
+        bounds and enforce a sane minimum size rather than assuming the
+        caller already validated it.
+
+        Geometry only -- this is orthogonal to `set_state()`, which
+        controls color. Calling this does not change the current
+        `AuraState`.
+        """
+
+    @abstractmethod
+    def clear_target_box(self) -> None:
+        """Morph Aura's outline back to tracing the full screen edge.
+
+        A no-op (in effect, though implementations may still no-op
+        internally) if no target box is currently active.
+        """
+
+    @abstractmethod
     def show(self) -> None:
         """Make the Aura overlay visible."""
 

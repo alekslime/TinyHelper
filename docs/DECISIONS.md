@@ -674,3 +674,230 @@ real files under `tmp_path` (schema.py/paths.py patched out): one
 reproducing the exact bug (an old file missing `vision` entirely gains
 it, while a customized `aura.theme` survives), one confirming an
 up-to-date file is left byte-for-byte untouched. All pass.
+
+## Vision gated behind trigger keywords, not always-on (2026-07-13)
+
+**Problem:** Milestone 5's screen-context awareness (`vision.enabled`)
+captured and captioned the screen on *every* transcribed/debug query, once
+turned on. Confirmed working on real hardware, but MiniCPM-V-2.6 is
+CPU-only on the 3070 Ti (no spare VRAM alongside the main LLM) and 8B
+params, so every query paid real captioning latency even when the query
+had nothing to do with the screen.
+
+**Options considered:**
+(a) A keyword heuristic on the transcribed text ("screen", "this", "here",
+"see", "look") before capturing.
+(b) An explicit trigger phrase the user says to opt in per-query (e.g.
+"look at my screen").
+
+**Chosen: (a), keyword heuristic.** No new voice UX to teach the user (a
+trigger *phrase* the user has to remember and say correctly adds friction
+Iris's design otherwise avoids), and it degrades gracefully — a query that
+happens to mention "screen" but doesn't need visual context just costs one
+unnecessary capture, not a missed one. Implemented as
+`VisionSettings.trigger_keywords` (config-driven, same pattern as every
+other tunable in the app), checked via case-insensitive substring match in
+`main.py`'s `_build_prompt_with_screen_context()` before
+`screen_capture.capture()` is called at all. Empty list disables gating
+entirely (old always-on behavior), for anyone who wants it back.
+
+**Not yet tuned against real usage** — the default keyword list is a
+reasonable starting guess, not validated against how people actually
+phrase screen-related questions. Revisit if real usage shows obvious
+false negatives (a screen question that doesn't hit any keyword) or false
+positives (a keyword firing on unrelated queries) once used for real.
+
+## Bundled default_config.yaml's vision section resynced to schema (2026-07-13)
+
+`config/default_config.yaml`'s `vision:` section still had the original
+ONNX/Xenova captioning fields from Milestone 5's first pass, never updated
+when `vision/model.py` moved to the moondream2/MiniCPM-V-2.6 GGUF approach
+(see the Milestone 5 entry above and `docs/TODO.md`). This was harmless at
+runtime — Pydantic silently ignores unknown yaml keys and falls back to
+`VisionSettings`' schema defaults for anything missing — but left the
+bundled yaml actively misleading for anyone who opened it expecting to
+tune the vision model. Resynced to the current GGUF-based fields
+(`repo_id`, `model_filename`, `mmproj_filename`, `local_model_path`,
+`local_mmproj_path`, `n_ctx`, `n_gpu_layers`, `max_tokens`,
+`caption_prompt`) plus the new `trigger_keywords`, `ocr_enabled`,
+`ocr_min_confidence`, `tesseract_cmd`. No schema change — `config/schema.py`
+was already correct; only the bundled yaml was stale.
+
+## Milestone 7: Aura morphs to trace a target box, not a generic overlay layer (2026-07-13)
+
+**Original framing (mine, going in):** a general-purpose overlay renderer
+drawing arbitrary shapes (circles, arrows, bounding boxes, labels) on top
+of screen content, separate from the Aura edge glow.
+
+**Actual design (settled through direct back-and-forth):** narrower and
+more specific to Iris's existing visual language. Instead of a new
+overlay layer, the existing full-screen ambient edge glow
+(`GlowAuraRenderer`, Milestone 6) itself morphs so its outline traces the
+bounding box of a single target UI element, then eases back to the
+full-screen edge. One box at a time — not a general shape/annotation
+system. This reuses Milestone 6's blur-based glow technique and its
+`QVariantAnimation` cross-fade pattern, rather than introducing a second,
+unrelated rendering system alongside it.
+
+**Why this over the generic-overlay framing:** it's a smaller, more
+coherent addition — no new renderer, no new visual language, just an
+extension of the geometry Aura already draws. It also reads more clearly
+to the end user: the glow they already associate with Iris's state is the
+same thing pointing at what it's talking about, instead of a second,
+separate visual element appearing on top.
+
+**Structured output, not a regex-parsed single line:** `VisionModel.locate()`
+uses `LlamaGrammar.from_json_schema()` (built into `llama-cpp-python`,
+same dependency `vision/model.py` and `llm/engine.py` already use — no
+new library) to force `{"found": bool, "label": str, "x": int, "y": int,
+"w": int, "h": int}` at the token level. Considered a simpler
+regex-parsed free-text approach first (matches this project's usual
+"smallest thing that works" bias — see the Milestone 4/6 entries above),
+but a single box is exactly the shape structured output is good at, and
+the grammar dependency was already one import away — not the larger lift
+a multi-shape JSON schema would have been.
+
+**Percent coordinates, not pixels:** the vision model reasons over its
+own resized input image, not the caller's actual screen resolution — it
+has no way to reliably output real pixel coordinates. `x`/`y`/`w`/`h` are
+0-100 (percent of the screenshot); `main.py` will convert to real pixels
+using the known screen-capture geometry when wiring this into the
+renderer (Part B.3).
+
+**`found=False` and a parse failure are one case, not two:** originally
+asked "what happens on a malformed/missing annotation" expecting to
+distinguish a genuine parse glitch from the model correctly finding
+nothing — settled on treating both identically (red `AuraState.ERROR` +
+asking the user if they want to try again), since from the user's
+perspective both are "nothing to show right now," and a single failure
+path is simpler to build and reason about than two.
+
+**Grammar constrains structure, not semantics** — worth restating since
+it's easy to over-trust: llama.cpp's grammar guarantees the *shape* of
+the output (valid JSON matching the schema), not that the box is
+*correct* (e.g. it could still report `found=True` with a box that
+doesn't correspond to anything real, or numerically valid but nonsensical
+bounds like `x=90, w=50`). Part B.3's wiring needs to sanity-check/clamp
+the box before using it, not treat `locate()`'s output as ground truth
+just because it parsed.
+
+**Verification status:** `VisionModel.locate()`'s grammar-building and
+JSON-parsing logic is covered by 6 real tests in
+`tests/test_vision_model.py` (mocked `Llama.create_chat_completion`, not
+mocked parsing logic — same pattern as `test_llm_engine.py`). **Not yet
+run against the real model** — this sandbox has no GPU/model weights to
+actually run MiniCPM-V-2.6 inference. Real-hardware verification needs to
+confirm the grammar produces not just valid JSON but *sensible* boxes on
+real screenshots, per the "constrains structure, not semantics" note
+above.
+
+**Part B.2 (renderer generalization) reuses Milestone 6's mask/animation
+machinery rather than introducing new ones:** `_build_blurred_mask()`
+already took a canvas size and drew 4 edge bands into it; it now also
+takes a `target_rect` and draws those same 4 bands along *that* rect's
+edges instead of the canvas's own, so it's the exact same function doing
+the exact same drawing — just parameterized. The geometry morph
+(`_rect_animation`) mirrors the existing color cross-fade
+(`_animation`/`TRANSITION_MS`) almost exactly, down to reusing
+`QEasingCurve.Type.OutCubic`, deliberately, rather than inventing a new
+animation shape for what's conceptually the same "ease from A to B"
+pattern. The two animations are kept as separate `QVariantAnimation`
+instances with separate durations (`BOX_TRANSITION_MS` = 600ms vs.
+`TRANSITION_MS` = 500ms) since color and geometry are orthogonal and
+there's no reason a state change and a target-box change should be
+forced to animate at the same speed.
+
+**Clamping lives in the renderer, not the caller:** `_clamp_target_rect()`
+sits inside `GlowAuraRenderer` rather than being pushed onto whatever
+calls `show_target_box()` (Part B.3's `main.py` wiring, eventually).
+Reasoning: `AuraRenderer.show_target_box()`'s contract is explicitly
+"coordinates are untrusted" (see its docstring in `base.py`) — the
+renderer is the one thing that actually knows the legal bounds (its own
+`_screen_rect`, `MIN_BOX_SIZE_PX`), so it's the natural place to enforce
+them, and it means *any* future caller (not just Part B.3's `locate()`
+wiring) gets the same safety for free rather than having to remember to
+clamp before calling.
+
+## Milestone 7 Part B.3: locate() bypasses normal LLM generation entirely (2026-07-14)
+
+A locate-triggered query ("where is the save button") does not also go
+through `llm_engine.generate()` -- `_locate_worker()` in `main.py` calls
+`VisionModel.locate()` and, on success, replies with a short templated
+"Found it -- {label}." rather than handing the vision model's answer to
+the text LLM to rephrase or comment on. Reasoning: `locate()`'s
+structured output already *is* the answer to "where is X" (a box to
+point at) -- running it through the text LLM afterward would add a
+second real-time CPU-bound inference pass (Qwen2.5, on top of the
+already-slow MiniCPM-V call) for a response that's mostly decorative.
+Revisit if user feedback wants a more conversational reply than the
+template -- `on_target_found()`/`on_target_not_found()` are the only two
+places that would need to change.
+
+**A separate `locate_trigger_keywords` setting, not reuse of
+`trigger_keywords`.** The existing `vision.trigger_keywords` decides "does
+this query care about the screen at all" (gating caption+OCR context
+folded into the LLM prompt). Part B.3 needed a different, more specific
+question: "does this query want Iris to point at something." Reusing
+`trigger_keywords` for both would mean every screen-context query (e.g.
+"what's on my screen") would also attempt `locate()`, which doesn't make
+sense for a query with no specific target. The two lists are checked
+independently in `on_transcribed()` -- a locate match doesn't require also
+matching `trigger_keywords`, and vice versa.
+
+**Percent→pixel conversion uses the *captured* monitor's geometry, not
+Aura's screen geometry.** `ScreenCapture` gained a `monitor_geometry`
+property (mss's own `left`/`top`/`width`/`height` dict for whatever
+`capture()` last grabbed) specifically so `_locate_worker()` converts
+`locate()`'s percent output using the region that was *actually*
+screenshotted -- not `GlowAuraRenderer`'s own `_screen_rect` (primary
+screen only, see its Milestone 6 note), which could be a different
+monitor or a different combined-virtual-screen size depending on
+`vision.monitor_index`. `GlowAuraRenderer.show_target_box()`'s existing
+clamping (Part B.2) is the safety net if the two disagree on a
+multi-monitor setup -- the box lands somewhere legal on Aura's actual
+overlay screen even if not pixel-perfect on a different monitor than the
+one that was captured. Properly aligning Aura's overlay to match
+`vision.monitor_index` (rather than always the primary screen) is a
+known follow-up, not solved here -- see `docs/TODO.md`.
+
+**Fixed vision config drift while here.** `config/schema.py` /
+`config/default_config.yaml`'s `vision.repo_id` / `model_filename` /
+`mmproj_filename` / `n_ctx` still had moondream2's values from before
+`vision/model.py`'s MiniCPM-V-2.6 rework -- a real, pre-existing bug
+(not introduced this session) that this session's testing surfaced
+while double-checking `VisionModel`'s config path for the `locate()`
+wiring. Left as `vision/model.py`'s own `DEFAULT_*` constants describe
+it (openbmb/MiniCPM-V-2_6-gguf, ggml-model-Q4_K_M.gguf,
+mmproj-model-f16.gguf, n_ctx=4096) -- see that module's docstring for
+why pairing the wrong weights with `MiniCPMv26ChatHandler` fails
+*silently* (garbage embeddings, not an error) rather than loudly, which
+is what made this worth fixing immediately rather than just noting for
+later.
+
+## Milestone 7 Part B.3 follow-up: reject degenerate zero-area locate() boxes (2026-07-14)
+
+Real bug, caught from an actual test run on real hardware (Premiere Pro,
+dual-monitor, MiniCPM-V-2.6): `locate()` returned `found=True` with
+`x=0, y=0, w=0, h=0` for "point to the export button on my left
+screen" -- the model's own answer was meaningless (no real box), but
+`GlowAuraRenderer.show_target_box()`'s existing clamping (Part B.2,
+which only guards against off-screen/undersized coordinates) inflated
+that zero-area box up to `MIN_BOX_SIZE_PX` and rendered a small box in
+the top-left corner as if it were a real detection -- see the screenshot
+in the session log. `_locate_worker()` in `main.py` now rejects
+`found=True` responses where `w <= 0 or h <= 0` and routes them through
+the same `report_not_found()` path as `found=False` -- a degenerate box
+is not a real answer, whatever the `found` flag says. This is exactly
+the caller-side sanity-checking `locate()`'s own docstring already calls
+for ("the model could still report a `found=True` box that doesn't
+actually correspond to anything real... Milestone 7's wiring should
+clamp/sanity-check the box before using it") -- just not yet done when
+Part B.3 first shipped.
+
+Whether the *underlying* zero-area answer was a genuine model failure
+(plausible -- MiniCPM-V-2.6 was asked to reason about a spatial concept,
+"my left screen," inside a full 3840x1080 combined-virtual-screen
+capture split into 8 tiled slices, which is a much harder grounding task
+than locating something within a single monitor's screenshot) is a
+separate, real-hardware tuning question, not something this fix
+addresses -- see `docs/TODO.md`'s note on `vision.monitor_index`.

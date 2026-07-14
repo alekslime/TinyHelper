@@ -1,172 +1,130 @@
 # HANDOFF.md
 
-**Last updated:** 2026-07-10
-**Milestone completed:** Milestone 4 — Local LLM Integration ✅
+**Last updated:** 2026-07-15
+**Milestones completed:** 1 through 6 ✅. Milestone 7 (Visual Guidance) is
+in progress: Parts B.1, B.2, and B.3 are done, B.4 remains. See
+`docs/ROADMAP.md` for full milestone history and `docs/TODO.md` for the
+part-by-part breakdown.
 
 ---
 
-## Summary of work completed
+## Summary of work completed since the last HANDOFF.md update
 
-Milestone 4 is complete: local LLM text generation via llama.cpp
-(`llama-cpp-python`), wired into `on_transcribed()` so a transcribed (or
-debug-typed) command now gets a real generated response instead of the
-`TODO (Milestone 4)` placeholder. Built in one part, since the shape
-closely follows Milestone 3's speech-to-text wiring:
+**Session 3 (2026-07-15) — Part B.3: wiring.** `main.py`'s query flow now
+actually calls `VisionModel.locate()` for the first time.
 
-1. **`llm/engine.py`** — `LLMEngine`, wraps a llama.cpp `Llama`
-   instance. Downloads its GGUF model from Hugging Face Hub via
-   `Llama.from_pretrained(repo_id, filename)` by default (cached after
-   first use, same pattern as Faster-Whisper), or loads a local `.gguf`
-   directly if `llm.local_model_path` is set in config. Single-turn
-   `generate(user_text) -> str`, no conversation memory yet (Milestone 9).
-2. **`app/llm_bridge.py`** — Qt signal bridge (`response_ready`,
-   `generation_failed`), same pattern as `transcript_bridge.py`.
-3. **Wiring in `main.py`** — `on_transcribed()` now keeps Aura in THINKING
-   and runs `LLMEngine.generate()` on a dedicated worker thread
-   (`_run_generation`), never the audio callback or Qt main thread. The
-   result reaches the main thread via `llm_bridge`, which drives
-   `on_llm_response()` (display + Aura → IDLE) or `on_llm_failed()`
-   (display + Aura → ERROR). LLM construction failure (missing extra, or
-   model load/download failure) leaves `llm_engine = None` and
-   `on_transcribed()` shows a fallback message instead of crashing —
-   same graceful-degradation pattern as the transcriber.
-4. **`app/main_window.py`** — added a read-only response text area (not
-   gated by `debug.enabled`, unlike the debug input — this is the only
-   way to see a response at all until Milestone 8 adds voice output) and
-   a `show_response(text)` method.
-5. **`config/schema.py` / `config/default_config.yaml`** — new `LLMSettings`
-   / `llm:` section: `repo_id`, `filename`, `local_model_path`, `n_ctx`,
-   `n_gpu_layers`, `max_tokens`, `temperature`, `system_prompt`.
+- A new `vision.locate_trigger_keywords` setting (`config/schema.py`,
+  `config/default_config.yaml`) gates a separate path from the existing
+  `trigger_keywords` (caption/OCR context gate) — see `docs/DECISIONS.md`
+  for why these are two independent lists, not one reused list.
+- `on_transcribed()` checks `_is_locate_query(text)` first; if matched,
+  `_locate_worker()` runs on its own thread and **bypasses normal LLM
+  generation entirely** — `locate()`'s structured output already is the
+  answer to "where is X," so there's no second real-time inference pass
+  through the text LLM. See `docs/DECISIONS.md` if that's ever worth
+  revisiting for a more conversational reply.
+- `_locate_worker()`: `screen_capture.capture()` →
+  `vision_model.locate(image, target=text)` → converts the result's
+  percent-of-screenshot coordinates to real screen pixels using the
+  *actually captured* monitor's geometry → reports through a new
+  `app/locate_bridge.py::LocateResultBridge` (same cross-thread
+  `QObject`+`Signal` pattern as the other three `app/*_bridge.py` files).
+- `found=True` → `on_target_found()` → `AuraController.show_target_box()`
+  + a short reply + `AuraState.IDLE`. `found=False` / parse failure both
+  collapse into `on_target_not_found()` → `AuraState.ERROR` + "I couldn't
+  find that — want to try again?" — one path, not two, per the Milestone
+  7 design decision.
+- `vision/capture.py`: `ScreenCapture` gained a `monitor_geometry`
+  property — the real geometry of whatever `capture()` last grabbed,
+  needed because the percent→pixel conversion must use the region that
+  was *actually* captured, not assume it matches Aura's own
+  primary-screen-only overlay geometry (documented multi-monitor caveat,
+  not solved this session — Part B.2's clamping is the safety net).
+- **Verified for real**, with only two boundaries faked (both plainly
+  documented as such, not silently glossed over): Llama (no GPU/model
+  weights in this sandbox, same as Part B.1) and mss's X11 grab (this
+  sandboxed container can't get a real X11/shm connection to Xvfb —
+  confirmed by actually trying it first and getting a connection error,
+  not assumed). Everything else in the verification is real: real
+  `VisionModel.locate()` JSON parsing, the exact percent→pixel conversion
+  code copied verbatim from `main.py`, a real `QObject` signal crossing a
+  real background thread, and a real `GlowAuraRenderer` ending up tracing
+  the exact right rect — for both the found and not-found paths.
+- **Found and fixed a real, pre-existing config/code drift bug** while
+  double-checking `VisionModel`'s config path: `config/schema.py` /
+  `config/default_config.yaml`'s `vision.repo_id` / `model_filename` /
+  `mmproj_filename` / `n_ctx` still held moondream2's values from before
+  `vision/model.py`'s MiniCPM-V-2.6 rework. This wasn't introduced this
+  session, but it's a live bug — `vision/model.py`'s own docstring
+  explains pairing the wrong weights with `MiniCPMv26ChatHandler` fails
+  *silently* (garbage embeddings, not an error), which is why it was
+  fixed immediately rather than just noted. Corrected to match
+  `vision/model.py`'s own `DEFAULT_*` constants.
 
-## Files created
+## Files modified (2026-07-15 session)
 
-```
-iris/
-├── app/
-│   └── llm_bridge.py    (new)
-├── llm/
-│   └── engine.py        (new)
-```
+- `main.py` — the actual Part B.3 wiring (see above).
+- `app/locate_bridge.py` — new file, `LocateResultBridge`.
+- `vision/capture.py` — `monitor_geometry` property.
+- `config/schema.py`, `config/default_config.yaml` —
+  `locate_trigger_keywords` (new), plus the moondream2→MiniCPM-V-2.6 drift
+  fix (`repo_id`/`model_filename`/`mmproj_filename`/`n_ctx`).
+- `docs/TODO.md`, `docs/DECISIONS.md` — Part B.3 marked done with real
+  verification details; new decision entries for the LLM-bypass choice,
+  the separate keyword list, the geometry-source-of-truth choice, and the
+  config drift fix.
+- `HANDOFF.md` — this file.
 
-## Files modified
+## Known issues / not yet verified
 
-- `main.py` — LLM construction (defensive import + graceful load-failure
-  handling, same shape as `voice.service`), `llm_bridge` wiring,
-  `on_transcribed()` now spawns a worker thread for generation instead of
-  immediately returning to IDLE, new `on_llm_response()`/`on_llm_failed()`
-  handlers.
-- `app/main_window.py` — added the response display area + `show_response()`.
-- `config/schema.py` — added `LLMSettings`, registered on `AppSettings`.
-- `config/default_config.yaml` — added `llm:` section.
-- `pyproject.toml` — added `huggingface_hub` to the `llm` extras group
-  (needed by `Llama.from_pretrained`).
-- `docs/ROADMAP.md` — Milestone 4 marked complete.
-- `docs/ARCHITECTURE.md` — documented `llm/` module structure, updated the
-  data-flow diagram.
-- `docs/DECISIONS.md` — four new entries: model download/cache pattern,
-  default-model rationale ("small and working" over "best for target
-  hardware"), worker-thread generation, graceful LLM failure handling.
-- `docs/TODO.md` — rewritten for Milestone 5 (screen capture + vision)
-  next steps.
-- `README.md` — updated status and testing instructions.
-
-## Dependencies added
-
-- `huggingface_hub>=0.23.0` (new, `llm` extras group) — required by
-  `Llama.from_pretrained()` for the download-and-cache flow.
-- `llama-cpp-python` was already declared in the `llm` extras group since
-  Milestone 1's `pyproject.toml` scaffolding (just unused until now).
-
-## Important implementation details
-
-- **Default model:** `Qwen/Qwen2.5-0.5B-Instruct-GGUF`,
-  `qwen2.5-0.5b-instruct-q4_k_m.gguf` (~1GB). Picked to get the full
-  pipeline working end-to-end quickly, not for best quality on the
-  documented RTX 3070 Ti target — see `docs/DECISIONS.md`. Swapping models
-  is a one-line `config.yaml` change (`llm.repo_id`/`llm.filename` for
-  another HF-hosted GGUF, or `llm.local_model_path` for a local file already on
-  disk) — no code changes needed either way.
-- **`gpu_layers: -1`** (default) tells llama.cpp to offload as many layers
-  as fit on the GPU. Should put the whole 0.5B model on the GPU comfortably
-  on both the 3070 Ti and the dev laptop, but this is reasoned about, not
-  yet measured on real hardware (see "Known issues").
-- **Generation runs on a dedicated worker thread**, same reasoning as
-  Milestone 3's transcription: a `threading.Thread` per request, result
-  delivered back to Qt via `LLMResponseBridge`. Aura stays in THINKING for
-  the duration.
-- **No conversation memory.** Each `generate()` call is independent,
-  seeded only with `llm.system_prompt`. Multi-turn context is Milestone 9.
-- **LLM failure (missing extra or load failure) does not disable voice/
-  transcription.** Mirrors the transcriber's failure isolation from
-  Milestone 3 — `llm_engine` is `None` in that case, and
-  `on_transcribed()` shows a fallback message and returns Aura to IDLE
-  instead of attempting generation.
-- **Response display, not gated by `debug.enabled`.** Unlike the debug
-  text *input*, the response *display* is core Milestone 4 functionality
-  (there's no other way to see a response yet, pending Milestone 8's
-  voice output) — so it always shows, debug panel or not.
-
-## Current folder structure
-
-See "Files created" above for what's new; full structure otherwise
-unchanged from Milestone 3's `HANDOFF.md`.
-
-## Known issues
-
-- **Real LLM generation has NOT been verified end-to-end on real hardware
-  yet.** Same category of gap as Milestone 3's Whisper transcription —
-  this dev sandbox has no Hugging Face Hub access, so `LLMEngine` could
-  only be verified for its import-failure and graceful-degradation paths
-  (via the debug text input, with no `llm` extra installed), not actual
-  generation: model download, load time, VRAM usage, response quality, or
-  latency. **The next session on real hardware should:**
-  `pip install -e ".[llm]"`, run `main.py`, use the debug text input (or
-  real voice, once verified per Milestone 3's open item) to ask something,
-  and confirm a reasonable response shows up in the window and console
-  within a few seconds. Report back before deciding whether to keep the
-  default model or swap to something bigger.
-- **Startup time impact unmeasured.** The LLM now loads eagerly at startup
-  alongside the wake word and Whisper models, same as Milestone 3 flagged
-  for Whisper. Worth timing combined startup on real hardware.
-- Same open items as Milestone 3's `HANDOFF.md` re: real-mic silence
-  detection tuning and `tests/` still being empty — now also applicable to
-  `llm/engine.py`, which has zero test coverage.
-
-## Testing performed
-
-1. **`config/schema.py` / `config/default_config.yaml`:** loaded the YAML
-   through `AppSettings` directly — validates cleanly, `llm.*` fields
-   populate with the expected defaults — PASS.
-2. **`llm/engine.py` / `main.py` import wiring:** confirmed the
-   `try/except ImportError` path fires correctly with `llama-cpp-python`
-   genuinely not installed in this sandbox (not simulated) — app logs the
-   warning and continues rather than crashing.
-3. **Full `main.py` end-to-end (offscreen Qt, real subprocess-equivalent
-   run):** app starts, both voice and LLM dependencies genuinely missing
-   in this sandbox → both warnings logged, window constructs, no crash.
-4. **Debug text input → no-LLM fallback path:** emitted
-   `debug_text_submitted` programmatically with `llm_engine is None`,
-   confirmed `on_transcribed()` shows the fallback message in
-   `MainWindow`'s response area and Aura returns to IDLE without error —
-   PASS.
-5. **NOT tested: actual generation** (needs Hugging Face Hub access this
-   sandbox doesn't have, same limitation as Milestone 3's Whisper).
-6. All test artifacts cleaned up afterward.
+- **Part B.3 has only been verified with two documented sandbox-only
+  fakes (Llama, mss's X11 grab)** — never against real hardware, a real
+  microphone, or a real vision model. The percent→pixel conversion math
+  and the full thread→bridge→Aura path are confirmed correct by direct
+  execution; what a real `locate()` call on real screen content actually
+  *finds* is not.
+- **The multi-monitor geometry mismatch** between `vision.monitor_index`
+  (can capture a single monitor or the combined virtual screen) and
+  `GlowAuraRenderer`'s primary-screen-only overlay is a known, documented
+  gap — not solved this session. On a single-monitor dev/target machine
+  it won't matter; worth a real check once multi-monitor is in scope.
+- **`locate_trigger_keywords`'s defaults are a first guess**, not tuned
+  against real usage — worth revisiting once real voice queries are
+  actually being tried against it.
+- Everything already listed as open in Part B.1/B.2's entries (real
+  MiniCPM-V-2.6 inference never run, `MIN_BOX_SIZE_PX` not tuned against
+  a real display, etc.) is still open.
+- All previously-open items in `docs/TODO.md`'s "Loose ends" section
+  remain open.
 
 ## Current project status
 
-Milestone 4 is code-complete and tested as thoroughly as this sandbox
-allows — the full pipeline wiring, failure-isolation paths, and config
-validation were all verified for real. The one genuine gap is actual
-generation (download, load, quality, latency), which needs the real
-target machine's Hugging Face access.
+Milestones 1–6 are code-complete and verified on real hardware. Milestone
+7 (Visual Guidance): Parts B.1, B.2, and B.3 are code-complete and
+verified for real in this sandbox wherever the sandbox allows (real logic
+throughout, with only the unavoidable Llama/display boundaries faked and
+plainly documented). None of Milestone 7 has run against real hardware
+yet. Part B.4 (reverting to the full-screen edge on next-query or
+cursor-dwell) has not been started.
 
 ## Next milestone
 
-**Milestone 5 — Screen Capture + Vision**, via MSS + an ONNX Runtime
-vision model. See `docs/ROADMAP.md` for scope and `docs/TODO.md` for
-specific next actions, including deciding how vision output folds into
-the LLM prompt built for `llm/engine.py`.
+**Milestone 7, Part B.4 — Reverting to full-screen edges.** Two triggers:
+
+1. **The next query comes in.** `on_transcribed()` already runs at the
+   start of every query — call `aura.clear_target_box()` there
+   unconditionally (before branching into the locate vs. LLM path), so
+   any active target box always clears the moment a new query starts,
+   regardless of whether the new query is itself a locate query.
+2. **The cursor dwells inside the target box for ~4 seconds** (matches
+   the existing breathing-pulse period). Needs a `QTimer` polling
+   `QCursor.pos()` against the currently-active box rect, or an event
+   filter — and needs to track "is a box currently active" and "what is
+   its rect" somewhere accessible to that timer, which right now only
+   `GlowAuraRenderer`/`_AuraOverlayWidget` know internally. Worth
+   deciding whether `AuraController` needs a way to expose "is a target
+   box active" (e.g. a property) rather than `main.py` tracking its own
+   separate copy of that state.
 
 ## Ready-to-copy prompt for the next session
 
@@ -178,25 +136,38 @@ Before writing any code:
 2. Read every file inside /docs
 3. Understand the current project state
 
-Milestone 4 (local LLM integration) is code-complete but has an unverified
-gap: real generation was not testable in the previous session's dev
-sandbox (no Hugging Face Hub access). Before starting Milestone 5, please:
-  1. Run `pip install -e ".[speech,llm]"` and `python main.py` on this machine
-  2. Say "Hey Jarvis" (or use the debug text input) followed by a short
-     question (e.g. "what's 12 times 7")
-  3. Confirm a reasonable response appears in the window and console
-     within a few seconds
-  4. Note the model download time, load time, and rough response latency
-  5. Report back what you observed before we proceed — including whether
-     the default small model (Qwen2.5-0.5B) feels worth upgrading now
-     that we can see real headroom on this hardware
+Milestones 1-6 are done and verified on real hardware. Milestone 7
+(Visual Guidance) is in progress: Parts B.1 (VisionModel.locate()), B.2
+(GlowAuraRenderer's target-box morph), and B.3 (main.py wiring: a
+locate-triggered query calls locate() and morphs Aura to the result) are
+all code-complete and verified for real in this sandbox -- real logic
+throughout, with only the Llama/display boundaries faked (this sandbox
+has no GPU/model weights or a working X11 connection to its own Xvfb).
+None of it has run against real hardware yet.
 
-Once that's confirmed, start Milestone 5 — Screen Capture + Vision, as
-scoped in docs/ROADMAP.md and docs/TODO.md.
+Start with Part B.4 -- Reverting to full-screen edges, as scoped in
+docs/TODO.md's Milestone 7 section:
+  1. Trigger 1 (next query): call aura.clear_target_box() at the start
+     of on_transcribed(), unconditionally, before branching into the
+     locate vs. LLM generation path.
+  2. Trigger 2 (cursor dwell, ~4s): needs a QTimer polling
+     QCursor.pos() against the active target box's rect. Decide first
+     whether AuraController should expose "is a target box currently
+     active, and what's its rect" as its own small piece of state (it
+     isn't tracked anywhere outside GlowAuraRenderer/_AuraOverlayWidget
+     right now), rather than main.py keeping a separate shadow copy that
+     could drift out of sync.
+  3. Confirm the whole flow end-to-end as best this sandbox allows (see
+     docs/TODO.md and the verify_target_box.py / verify_part_b3.py
+     approach from the last two sessions for the offscreen-Qt pattern),
+     then flag plainly what still needs a real-hardware pass.
 
-Work incrementally, in small parts (not all at once — confirm progress
+Work incrementally, in small parts (not all at once -- confirm progress
 with me between parts). Do not begin implementing anything beyond
-Milestone 5's scope. End the session by updating HANDOFF.md and
-docs/TODO.md, and only docs/ROADMAP.md / docs/ARCHITECTURE.md /
-docs/DECISIONS.md / README.md if something actually changed.
+Milestone 7's scope. Do not write fake/mock-only "it imports" tests --
+verify things for real wherever this sandbox allows, and say plainly
+when something genuinely can't be. End the session by updating
+HANDOFF.md and docs/TODO.md, and only docs/ROADMAP.md /
+docs/ARCHITECTURE.md / docs/DECISIONS.md / README.md if something
+actually changed.
 ```
