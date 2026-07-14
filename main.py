@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication
 from app.llm_bridge import LLMResponseBridge
 from app.main_window import MainWindow
 from app.transcript_bridge import TranscriptBridge
+from app.vision_locate_bridge import VisionLocateBridge
 from app.wake_word_bridge import WakeWordBridge
 from aura.controller import AuraController
 from aura.renderer.glow_renderer import GlowAuraRenderer
@@ -80,6 +81,34 @@ except ImportError:
     _VISION_AVAILABLE = False
 
 
+def _percent_box_to_pixels(
+    location, image_size: tuple[int, int], monitor_left: int, monitor_top: int
+) -> tuple[int, int, int, int]:
+    """Convert a `VisionModel.locate()` result (percent of the captured
+    image, 0-100 each) to real screen pixel coordinates.
+
+    `image_size` is the captured screenshot's own resolution (`PIL.Image
+    .size`), which `x`/`y`/`w`/`h` are percentages of --  not necessarily
+    the same as the on-screen monitor resolution in a scaled-DPI setup,
+    but assumed equal here (same assumption `vision/capture.py` already
+    makes -- see its `mss`-based `capture()`). `monitor_left`/
+    `monitor_top` offset the result to real screen coordinates -- both
+    0 unless `vision.monitor_index` selects something other than the
+    combined virtual screen (index 0).
+
+    Milestone 7, Part B.3. Pure/no side effects so it's unit-testable on
+    its own, unlike the rest of this file's wiring (see module docstring:
+    "no feature logic belongs here" -- this is the one piece of actual
+    arithmetic Part B.3 needed, kept as small and isolated as possible).
+    """
+    img_w, img_h = image_size
+    x = monitor_left + round(location.x / 100 * img_w)
+    y = monitor_top + round(location.y / 100 * img_h)
+    w = round(location.w / 100 * img_w)
+    h = round(location.h / 100 * img_h)
+    return x, y, w, h
+
+
 def main() -> int:
     settings = get_settings()
     setup_logging(settings.logging)
@@ -110,6 +139,7 @@ def main() -> int:
     wake_word_bridge = WakeWordBridge()
     transcript_bridge = TranscriptBridge()
     llm_bridge = LLMResponseBridge()
+    vision_locate_bridge = VisionLocateBridge()
 
     # Loaded eagerly (like the wake word / Whisper models) so the first
     # real utterance isn't delayed by a cold-start model load. Failure here
@@ -184,34 +214,121 @@ def main() -> int:
             "continuing without screen context this session."
         )
 
+    # Milestone 7, Part B.3: real on-screen offset of the monitor being
+    # captured, so locate()'s percent-of-image coordinates can be converted
+    # to real screen pixels (see _percent_box_to_pixels). Stays (0, 0) --
+    # correct for monitor_index=0 (the combined virtual screen, the
+    # default) -- if this lookup fails for any reason; a wrong offset on a
+    # genuine multi-monitor, non-default monitor_index setup would show
+    # the target box in the wrong place, but that's a lesser failure than
+    # crashing startup over it.
+    vision_monitor_left = 0
+    vision_monitor_top = 0
+    if screen_capture is not None:
+        try:
+            monitor = ScreenCapture.list_monitors()[settings.vision.monitor_index]
+            vision_monitor_left = monitor["left"]
+            vision_monitor_top = monitor["top"]
+        except Exception:
+            logger.exception(
+                "Could not determine monitor geometry for target-box pixel "
+                "conversion — falling back to a (0, 0) offset."
+            )
+
     def on_wake_word_detected(model_name: str, score: float) -> None:
         # Runs on the main thread (Qt queues the signal delivery for us).
         logger.info("Wake word '%s' detected (score=%.3f) — Aura -> LISTENING", model_name, score)
         aura.set_state(AuraState.LISTENING)
 
-    def _build_prompt_with_screen_context(text: str) -> str:
+    def _build_prompt_with_screen_context(text: str) -> str | None:
         # Runs on the same worker thread as generation (see _generate_worker).
         # Capture + captioning happen here, not on the Qt main thread, for
         # the same reason LLM generation does — this can take real time
         # (captioning is CPU-bound greedy decoding, see vision/model.py).
         # Any failure here is logged and swallowed — screen context is a
         # nice-to-have, never worth failing the whole query over.
+        #
+        # Returns None (Milestone 7, Part B.3) specifically when
+        # locate() reports found=False or a parse failure for a query
+        # that asked to find/point at something (locate_trigger_keywords
+        # matched) -- that case aborts the whole query with a retry
+        # prompt instead of falling back to a captionless answer. Every
+        # other failure path here (capture failure, model load failure,
+        # no keyword match) still just degrades to returning `text`
+        # unchanged, as before.
         if screen_capture is None or (vision_model is None and ocr_reader is None):
             return text
 
-        keywords = settings.vision.trigger_keywords
-        if keywords and not any(kw.lower() in text.lower() for kw in keywords):
+        vision_keywords = settings.vision.trigger_keywords
+        should_caption_or_ocr = not vision_keywords or any(
+            kw.lower() in text.lower() for kw in vision_keywords
+        )
+
+        locate_keywords = settings.vision.locate_trigger_keywords
+        should_locate = vision_model is not None and (
+            not locate_keywords or any(kw.lower() in text.lower() for kw in locate_keywords)
+        )
+
+        if not should_caption_or_ocr and not should_locate:
             logger.debug(
-                "Skipping screen context — query matched none of vision.trigger_keywords %r",
-                keywords,
+                "Skipping screen context — query matched neither "
+                "vision.trigger_keywords %r nor vision.locate_trigger_keywords %r",
+                vision_keywords,
+                locate_keywords,
             )
             return text
-        logger.debug("Screen context triggered by keyword match in query: %r", text)
+        logger.debug(
+            "Screen context triggered for query %r (locate=%s, caption/ocr=%s)",
+            text,
+            should_locate,
+            should_caption_or_ocr,
+        )
 
         try:
             image = screen_capture.capture()
         except Exception:
             logger.exception("Screen capture failed — continuing without screen context.")
+            return text
+
+        # Milestone 7, Part B.3: attempt to find and flash a target box
+        # before captioning/OCR. found=False and a genuine parse failure
+        # are treated identically here, per the Milestone 7 design
+        # decision — both abort this query with a retry prompt rather
+        # than silently falling back to a normal answer, since the user
+        # specifically asked to be shown something.
+        if should_locate:
+            try:
+                location = vision_model.locate(image, text)
+            except Exception:
+                logger.exception("Vision locate() failed — continuing without a target box.")
+                location = None
+
+            if location is not None and location.found:
+                px, py, pw, ph = _percent_box_to_pixels(
+                    location, image.size, vision_monitor_left, vision_monitor_top
+                )
+                logger.info(
+                    "locate() found %r at screen pixels (%d, %d, %d, %d)",
+                    location.label,
+                    px,
+                    py,
+                    pw,
+                    ph,
+                )
+                vision_locate_bridge.report_found(px, py, pw, ph)
+            else:
+                logger.info(
+                    "locate() found nothing to point at for query %r (label=%r) "
+                    "— aborting this query with a retry prompt.",
+                    text,
+                    location.label if location is not None else None,
+                )
+                llm_bridge.report_failure(
+                    "I couldn't find anything on screen matching that — want to try again?"
+                )
+                return None
+
+        if not should_caption_or_ocr:
             return text
 
         caption = ""
@@ -252,6 +369,14 @@ def main() -> int:
         assert llm_engine is not None  # only started when it loaded successfully
         try:
             prompt = _build_prompt_with_screen_context(text)
+            if prompt is None:
+                # Milestone 7, Part B.3: locate() found nothing to point
+                # at for this query. The retry-prompt failure was already
+                # reported via llm_bridge.report_failure() inside
+                # _build_prompt_with_screen_context — nothing left to do
+                # here except stop before spending an LLM call on a query
+                # we've already decided not to answer normally.
+                return
             response = llm_engine.generate(
                 prompt,
                 max_tokens=settings.llm.max_tokens,
@@ -298,11 +423,21 @@ def main() -> int:
         logger.info("No speech recognized — Aura -> IDLE")
         aura.set_state(AuraState.IDLE)
 
+    def on_target_box_found(x: int, y: int, w: int, h: int) -> None:
+        # Runs on the main thread. Milestone 7, Part B.3: locate() found
+        # something on the worker thread — the actual Aura call has to
+        # happen here, since AuraController/GlowAuraRenderer own real Qt
+        # widgets. Geometry only, orthogonal to AuraState — doesn't touch
+        # whatever THINKING/IDLE/ERROR transition is happening alongside it.
+        logger.info("Aura target box -> (%d, %d, %d, %d)", x, y, w, h)
+        aura.show_target_box(x, y, w, h)
+
     wake_word_bridge.detected.connect(on_wake_word_detected)
     transcript_bridge.transcribed.connect(on_transcribed)
     transcript_bridge.no_speech_detected.connect(on_no_speech_detected)
     llm_bridge.response_ready.connect(on_llm_response)
     llm_bridge.generation_failed.connect(on_llm_failed)
+    vision_locate_bridge.box_found.connect(on_target_box_found)
 
     voice_service = None
     if _VOICE_AVAILABLE:

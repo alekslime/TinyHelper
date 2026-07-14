@@ -34,26 +34,28 @@ class AuraRenderer(ABC):
 
     @abstractmethod
     def show_target_box(self, x: int, y: int, w: int, h: int) -> None:
-        """Morph Aura's outline from the full screen edge to trace a
-        specific rectangular screen region (Milestone 7), given in real
-        screen pixel coordinates with a top-left origin.
+        """Flash a rectangular outline around a specific screen region
+        (Milestone 7) for a brief, implementation-defined duration, given
+        in real screen pixel coordinates with a top-left origin.
 
         Coordinates originate from a vision model's output and are not
         trusted as-is: implementations must clamp the rect to the screen
         bounds and enforce a sane minimum size rather than assuming the
         caller already validated it.
 
-        Geometry only -- this is orthogonal to `set_state()`, which
-        controls color. Calling this does not change the current
-        `AuraState`.
+        This is orthogonal to `set_state()`, which controls the ambient
+        glow's color. Calling this does not change the current
+        `AuraState`, and the ambient glow keeps running independently.
         """
 
     @abstractmethod
     def clear_target_box(self) -> None:
-        """Morph Aura's outline back to tracing the full screen edge.
+        """Dismiss the flashed target box immediately, if one is showing.
 
-        A no-op (in effect, though implementations may still no-op
-        internally) if no target box is currently active.
+        A no-op if no target box is currently active. Implementations
+        that auto-dismiss the box after a timeout (see
+        `show_target_box`) may still call this on the next query, so it
+        should be safe to call redundantly.
         """
 
     @abstractmethod

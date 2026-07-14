@@ -817,3 +817,47 @@ renderer is the one thing that actually knows the legal bounds (its own
 them, and it means *any* future caller (not just Part B.3's `locate()`
 wiring) gets the same safety for free rather than having to remember to
 clamp before calling.
+
+## Milestone 7, Part B.2: simplified from a morphing glow to a flashed rectangle outline (2026-07-14)
+
+**What changed:** the same-day session that built Part B.2 (Aura's
+ambient glow morphing into a target box, then easing back) got
+implemented and offscreen-verified, but immediately afterward it was cut
+for being disproportionate to what it delivers -- "draw a box around
+something" doesn't need a second `QVariantAnimation`, rect-aware mask
+caching, or coupling to the ambient glow's rendering at all. Replaced
+with: a separate `_TargetBoxWidget` that paints one plain rectangle
+outline and auto-hides itself after `TARGET_BOX_DURATION_MS` (2.5s) via a
+single-shot `QTimer`. No animation, no morph-back-to-screen-edge state,
+no interaction with `_AuraOverlayWidget`/`_build_blurred_mask()` at all --
+those are back to exactly their Milestone 6 shape.
+
+**Why cut rather than kept:** the morphing version worked and was
+verified for real (see the entry above), so this wasn't a correctness
+problem. It was a proportionality call: the ambient glow's blur-based
+rendering exists to make Iris's five discrete `AuraState`s read as a
+smooth, continuous visual language, which justifies its complexity. A
+target box is a one-shot "here's the thing I mean" pointer with no state
+machine of its own -- borrowing the glow's animation/masking machinery
+for that bought consistency at the cost of a lot of surface area (two
+animations to reason about, a rect-aware cache key, clamping logic
+threaded through both the renderer and the overlay widget) for a visual
+effect that a plain outline conveys just as well.
+
+**What's kept from the original Part B.2:** the `AuraRenderer` interface
+shape (`show_target_box(x, y, w, h)` / `clear_target_box()`), the
+untrusted-coordinates contract, and `_clamp_target_rect()`'s job of
+keeping a box on-screen at a legal minimum size -- all still true of the
+new design, just implemented against a much smaller widget.
+`MIN_BOX_SIZE_PX` dropped from 56px (`2 * SEED_BAND_PX + 20`, reasoned
+from the glow's blur geometry) to a flat 40px, since a plain outline has
+no blur/seed-band overlap concern -- the new number is about a box
+staying legible on screen, not about the ambient glow's rendering.
+
+**Effect on Part B.3/B.4:** B.3's wiring contract is unchanged (still
+`show_target_box()`/`clear_target_box()` with percent-to-pixel
+conversion happening at the call site). B.4 changes in framing rather
+than mechanism: since the box now disappears on its own, B.4 becomes
+about calling `clear_target_box()` early (next query, cursor dwell)
+rather than "reverting to the full-screen edge," since there's no
+morph-back state left to revert to.

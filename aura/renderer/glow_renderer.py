@@ -41,7 +41,7 @@ import math
 import time
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRect, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QConicalGradient, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QConicalGradient, QGuiApplication, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene, QWidget
 
 from aura.renderer.base import AuraRenderer
@@ -75,20 +75,32 @@ GRADIENT_VAL = 245
 # How long a state-to-state hue cross-fade takes.
 TRANSITION_MS = 500
 
-# Milestone 7: how long the outline takes to morph between the full
-# screen edge and a target box (either direction). Kept separate from
-# TRANSITION_MS since these animate genuinely different things (color vs.
-# geometry) and there's no reason they need matching durations -- picked
-# slightly slower than the color fade since a moving/resizing shape reads
-# better a bit more deliberately than an instant color swap does.
-BOX_TRANSITION_MS = 600
+# Milestone 7 (simplified 2026-07-14): how long a flashed target box
+# outline stays on screen before disappearing on its own, in ms. Replaces
+# the original "morph the ambient glow into a box" design -- see
+# docs/DECISIONS.md for why.
+#
+# Bumped 2.5s -> 8s (2026-07-14, real-hardware session) as a testing
+# convenience: on the dev laptop's CPU-only vision inference, each query's
+# round trip is itself on the order of minutes, so a person watching the
+# screen has plenty of time to miss a 2.5s flash entirely while looking
+# away waiting for the response. 8s is still short enough to read as a
+# "flash," just long enough to actually catch on this hardware. Revisit
+# once real GPU offload (see docs/HANDOFF.md's Session 5 notes) brings
+# per-query latency down to something closer to what B.2's original 2.5s
+# was designed around, and again once Part B.4's early-dismiss triggers
+# land (a next-query or cursor-dwell dismiss makes the exact duration
+# less load-bearing either way).
+TARGET_BOX_DURATION_MS = 8000
+
+# Stroke width (in pixels) of the flashed outline itself.
+TARGET_BOX_STROKE_PX = 3
 
 # Milestone 7: the smallest a target box is allowed to be (in each
-# dimension), in real screen pixels. Below this, the four blurred edge
-# bands (each SEED_BAND_PX wide before blur) would overlap or degenerate
-# into a single blob rather than a legible outline. Not yet tuned against
-# a real display -- see docs/DECISIONS.md.
-MIN_BOX_SIZE_PX = 2 * SEED_BAND_PX + 20
+# dimension), in real screen pixels. Below this, a flashed outline reads
+# as a meaningless sliver rather than pointing at anything legible. Not
+# yet tuned against a real display -- see docs/DECISIONS.md.
+MIN_BOX_SIZE_PX = 40
 
 
 def _shortest_hue_delta(start_deg: float, end_deg: float) -> float:
@@ -121,18 +133,17 @@ def _gradient_colors(anchor_hue_deg: float, alpha: int) -> list[QColor]:
     return colors
 
 
-def _build_blurred_mask(canvas_width: int, canvas_height: int, target_rect: QRect) -> QImage:
-    """Paint a solid white band along all four edges of `target_rect`
-    (not necessarily the whole canvas -- see Milestone 7's
-    `show_target_box`) and blur it with a real Gaussian blur
-    (`QGraphicsBlurEffect`). The result is a shape-only mask (white,
-    varying alpha) the size of the full canvas -- color is applied later,
-    per frame, via `_tint_gradient()`, so this expensive part only has to
-    run once per (canvas size, rect).
+def _build_blurred_mask(canvas_width: int, canvas_height: int) -> QImage:
+    """Paint a solid white band along all four edges of the canvas and
+    blur it with a real Gaussian blur (`QGraphicsBlurEffect`). The result
+    is a shape-only mask (white, varying alpha) the size of the full
+    canvas -- color is applied later, per frame, via `_tint_gradient()`,
+    so this expensive part only has to run once per canvas size.
 
-    When `target_rect` covers the whole canvas (Milestone 6's original,
-    and Milestone 7's "no target box active" default), this reduces to
-    exactly the original screen-edge-glow behavior.
+    Milestone 6's original behavior. Milestone 7's target-box pointing no
+    longer touches this widget or this mask at all -- see
+    `_TargetBoxWidget` for the separate, much simpler overlay that
+    handles it (design revision 2026-07-14, docs/DECISIONS.md).
     """
     seed = QImage(canvas_width, canvas_height, QImage.Format.Format_ARGB32_Premultiplied)
     seed.fill(0)
@@ -141,14 +152,11 @@ def _build_blurred_mask(canvas_width: int, canvas_height: int, target_rect: QRec
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(255, 255, 255, 255))
     band = SEED_BAND_PX
-    rx, ry, rw, rh = target_rect.x(), target_rect.y(), target_rect.width(), target_rect.height()
-    # Four bands drawn INWARD from target_rect's own edges, not the
-    # canvas's edges -- identical to the original code when target_rect
-    # == the whole canvas.
-    painter.drawRect(rx, ry, rw, band)
-    painter.drawRect(rx, ry + rh - band, rw, band)
-    painter.drawRect(rx, ry, band, rh)
-    painter.drawRect(rx + rw - band, ry, band, rh)
+    # Four bands drawn inward from the canvas's own edges.
+    painter.drawRect(0, 0, canvas_width, band)
+    painter.drawRect(0, canvas_height - band, canvas_width, band)
+    painter.drawRect(0, 0, band, canvas_height)
+    painter.drawRect(canvas_width - band, 0, band, canvas_height)
     painter.end()
 
     scene = QGraphicsScene()
@@ -208,15 +216,8 @@ class _AuraOverlayWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._anchor_hue = 0.0  # current state's base hue, 0-360 (animated on state change)
         self._rotation = 0.0    # current gradient rotation angle, degrees
-        self._mask: QImage | None = None  # cached blurred shape, rebuilt on resize or target_rect change
-        self._mask_cache_key: tuple[int, int, int, int, int, int] | None = None
-        # Milestone 7: the rect the blurred edge bands currently trace, in
-        # widget-local pixel coordinates. None until the first paint, at
-        # which point it defaults to the full widget rect (screen-edge
-        # glow, Milestone 6's original behavior). GlowAuraRenderer is
-        # responsible for animating this via set_target_rect() as the
-        # rect morphs between the full screen and a target box.
-        self._target_rect: QRect | None = None
+        self._mask: QImage | None = None  # cached blurred shape, rebuilt on resize
+        self._mask_cache_key: tuple[int, int] | None = None
 
         self._anim_timer = QTimer(self)
         self._anim_timer.setInterval(int(1000 / GRADIENT_FPS))
@@ -234,16 +235,6 @@ class _AuraOverlayWidget(QWidget):
         self._anchor_hue = hue_deg % 360.0
         self.update()
 
-    def set_target_rect(self, rect: QRect) -> None:
-        """Update the rect the blurred edge bands trace (Milestone 7).
-        Invalidates the cached mask so it's rebuilt against the new rect
-        on next paint -- same lazy-rebuild pattern as a resize.
-        """
-        self._target_rect = rect
-        self._mask = None
-        self._mask_cache_key = None
-        self.update()
-
     def stop(self) -> None:
         self._anim_timer.stop()
 
@@ -251,20 +242,15 @@ class _AuraOverlayWidget(QWidget):
         w, h = self.width(), self.height()
         if w <= 0 or h <= 0:
             return None
-        rect = self._target_rect if self._target_rect is not None else QRect(0, 0, w, h)
-        cache_key = (w, h, rect.x(), rect.y(), rect.width(), rect.height())
+        cache_key = (w, h)
         if self._mask is None or self._mask_cache_key != cache_key:
-            logger.debug("Rebuilding Aura blur mask for size %sx%s, rect=%s.", w, h, rect)
-            self._mask = _build_blurred_mask(w, h, rect)
+            logger.debug("Rebuilding Aura blur mask for size %sx%s.", w, h)
+            self._mask = _build_blurred_mask(w, h)
             self._mask_cache_key = cache_key
         return self._mask
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming convention)
         # Invalidate the cached mask; it'll be rebuilt lazily on next paint.
-        # Deliberately does NOT reset self._target_rect -- a resize while a
-        # target box is active (unlikely for a full-screen overlay, but
-        # possible on a display/resolution change) should keep tracing the
-        # same rect, not silently reset to the full screen edge.
         self._mask = None
         self._mask_cache_key = None
         super().resizeEvent(event)
@@ -279,6 +265,68 @@ class _AuraOverlayWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.drawImage(0, 0, tinted)
+        painter.end()
+
+
+class _TargetBoxWidget(QWidget):
+    """A frameless, click-through, always-on-top overlay that draws one
+    plain rectangle outline and then hides itself after
+    `TARGET_BOX_DURATION_MS` -- Milestone 7's "point at something on
+    screen" behavior.
+
+    Design revision (2026-07-14): replaces the earlier approach of
+    morphing `_AuraOverlayWidget`'s blurred ambient glow into a box
+    shape. That approach worked (verified offscreen) but its animation
+    surface (a second QVariantAnimation, rect-aware mask caching,
+    morph-back-to-screen-edge logic) was a lot of machinery for "draw a
+    box around a thing" -- see docs/DECISIONS.md. This widget knows
+    nothing about `AuraState`, hue, or the ambient glow at all; it just
+    paints a rect, waits, and disappears on its own.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self._rect: QRect | None = None
+        self._color = QColor(255, 255, 255, 255)
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+
+    def flash(self, rect: QRect, color: QColor) -> None:
+        """Show `rect` (already in this widget's own local coordinates --
+        callers must position/size this widget to match the target
+        screen geometry beforehand) outlined in `color`, restarting the
+        auto-hide timer if a box is already showing.
+        """
+        self._rect = QRect(rect)
+        self._color = QColor(color)
+        self.update()
+        self.show()
+        self._hide_timer.start(TARGET_BOX_DURATION_MS)
+
+    def stop(self) -> None:
+        """Cancel the auto-hide timer (e.g. on app shutdown)."""
+        self._hide_timer.stop()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming convention)
+        if self._rect is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self._color)
+        pen.setWidth(TARGET_BOX_STROKE_PX)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(self._rect)
         painter.end()
 
 
@@ -303,13 +351,12 @@ class GlowAuraRenderer(AuraRenderer):
         self._widget: _AuraOverlayWidget | None = None
         self._animation: QVariantAnimation | None = None
         self._current_hue: float = _base_hue(AuraState.IDLE)
-        # Milestone 7: geometry side of the aura, orthogonal to the color
-        # animation above. `_screen_rect` is the "home" rect (full screen
-        # edge) computed once in initialize(); `_rect_animation` morphs
-        # `_current_rect` between that and whatever target box is active.
+        # Milestone 7: `_screen_rect` is used to clamp untrusted target-box
+        # coordinates to the screen bounds; `_target_box_widget` is the
+        # separate, simple overlay that actually flashes a box (see
+        # _TargetBoxWidget).
         self._screen_rect: QRect | None = None
-        self._current_rect: QRect | None = None
-        self._rect_animation: QVariantAnimation | None = None
+        self._target_box_widget: _TargetBoxWidget | None = None
 
     def initialize(self) -> None:
         self._widget = _AuraOverlayWidget()
@@ -327,21 +374,18 @@ class GlowAuraRenderer(AuraRenderer):
 
         self._widget.set_anchor_hue(self._current_hue)
 
-        # Milestone 7: the "home" rect a target box always morphs back to.
-        # Falls back to the same 1920x1080 default used above when no
-        # primary screen is detected, so the two never disagree.
+        # Milestone 7: bounds used to clamp untrusted target-box
+        # coordinates. Falls back to the same 1920x1080 default used above
+        # when no primary screen is detected, so the two never disagree.
         self._screen_rect = QRect(geometry) if geometry is not None else QRect(0, 0, 1920, 1080)
-        self._current_rect = QRect(self._screen_rect)
 
         self._animation = QVariantAnimation()
         self._animation.setDuration(TRANSITION_MS)
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._animation.valueChanged.connect(self._on_animation_value_changed)
 
-        self._rect_animation = QVariantAnimation()
-        self._rect_animation.setDuration(BOX_TRANSITION_MS)
-        self._rect_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._rect_animation.valueChanged.connect(self._on_rect_animation_value_changed)
+        self._target_box_widget = _TargetBoxWidget()
+        self._target_box_widget.setGeometry(self._screen_rect)
 
         logger.debug("GlowAuraRenderer initialized (geometry=%s).", geometry)
 
@@ -372,16 +416,6 @@ class GlowAuraRenderer(AuraRenderer):
         self._animation.setEndValue(self._current_hue + delta)
         self._animation.start()
 
-    def _on_rect_animation_value_changed(self, value: QRect) -> None:
-        # `value` arrives as a QRect (or QRectF, depending on Qt's
-        # interpolation of the QVariant) -- normalize to QRect since
-        # `_AuraOverlayWidget.set_target_rect` expects integer pixel
-        # coordinates.
-        rect = value if isinstance(value, QRect) else value.toRect()
-        self._current_rect = rect
-        if self._widget is not None:
-            self._widget.set_target_rect(rect)
-
     def _clamp_target_rect(self, x: int, y: int, w: int, h: int) -> QRect:
         """Clamp an untrusted (x, y, w, h) -- e.g. straight from the
         vision model's `locate()` output -- to a legal rect fully inside
@@ -406,32 +440,28 @@ class GlowAuraRenderer(AuraRenderer):
 
         return QRect(left, top, width, height)
 
-    def _animate_rect_to(self, target: QRect) -> None:
-        if self._widget is None:
-            return
-
-        if self._rect_animation is None:
-            # show_target_box()/clear_target_box() called before
-            # initialize() -- shouldn't happen via AuraController, but
-            # degrade to an instant jump rather than crash, same pattern
-            # as set_state()'s equivalent guard.
-            self._current_rect = QRect(target)
-            self._widget.set_target_rect(target)
-            return
-
-        start = self._current_rect if self._current_rect is not None else target
-        self._rect_animation.stop()
-        self._rect_animation.setStartValue(QRect(start))
-        self._rect_animation.setEndValue(QRect(target))
-        self._rect_animation.start()
-
     def show_target_box(self, x: int, y: int, w: int, h: int) -> None:
+        if self._target_box_widget is None:
+            # Called before initialize() -- shouldn't happen via
+            # AuraController, but no-op rather than crash, same pattern as
+            # set_state()'s equivalent guard.
+            return
+
         target = self._clamp_target_rect(x, y, w, h)
-        self._animate_rect_to(target)
+        screen = self._screen_rect if self._screen_rect is not None else QRect(0, 0, 1920, 1080)
+        # _target_box_widget's geometry is set to `screen` in initialize(),
+        # so translate the clamped rect from screen-absolute to the
+        # widget's own local coordinates before painting it.
+        local_rect = target.translated(-screen.x(), -screen.y())
+
+        color = QColor()
+        color.setHsv(int(self._current_hue), GRADIENT_SAT, GRADIENT_VAL, PEAK_ALPHA)
+        self._target_box_widget.flash(local_rect, color)
 
     def clear_target_box(self) -> None:
-        home = self._screen_rect if self._screen_rect is not None else QRect(0, 0, 1920, 1080)
-        self._animate_rect_to(home)
+        if self._target_box_widget is not None:
+            self._target_box_widget.stop()
+            self._target_box_widget.hide()
 
     def show(self) -> None:
         if self._widget is not None:
@@ -444,8 +474,10 @@ class GlowAuraRenderer(AuraRenderer):
     def shutdown(self) -> None:
         if self._animation is not None:
             self._animation.stop()
-        if self._rect_animation is not None:
-            self._rect_animation.stop()
+        if self._target_box_widget is not None:
+            self._target_box_widget.stop()
+            self._target_box_widget.close()
+            self._target_box_widget = None
         if self._widget is not None:
             self._widget.stop()
             self._widget.close()

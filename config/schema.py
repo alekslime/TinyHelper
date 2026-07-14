@@ -258,6 +258,18 @@ class VisionSettings(BaseModel):
             "an empty list to run vision on every query (old behavior)."
         ),
     )
+    locate_trigger_keywords: list[str] = Field(
+        default_factory=lambda: ["where", "find", "point", "show me", "locate"],
+        description=(
+            "When vision.enabled is true and a vision model is loaded, "
+            "VisionModel.locate() only runs if the transcribed/debug query "
+            "contains at least one of these keywords (case-insensitive "
+            "substring match) -- keeps the locate() call (and its "
+            "found=False retry-prompt abort path) from firing on queries "
+            "that were never asking to be shown/pointed at something. Set "
+            "to an empty list to attempt locate() on every query."
+        ),
+    )
     ocr_enabled: bool = Field(
         default=True,
         description="Whether to also run Tesseract OCR for verbatim on-screen text, alongside the scene description.",

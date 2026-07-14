@@ -138,12 +138,15 @@ sampling at multiple x-offsets from the edge.
 
 ## Milestone 7 — Visual Guidance — IN PROGRESS
 
-Design (2026-07-13, refined through direct back-and-forth): instead of a
-generic multi-shape overlay layer, the existing full-screen edge Aura
-(Milestone 6's `GlowAuraRenderer`) will itself morph to trace the outline
-of a single target UI element, then ease back to the full-screen edge.
-One box at a time, not a general shape/annotation system. See
-`docs/DECISIONS.md` for the full reasoning and the parts breakdown.
+Design (2026-07-13, refined through direct back-and-forth; simplified
+2026-07-14): a single target UI element gets a plain rectangle outline
+flashed around it for a couple seconds, then it disappears on its own.
+One box at a time, not a general shape/annotation system. This replaces
+the original plan of morphing Milestone 6's ambient glow itself into a
+box shape — that approach worked but added a lot of animation/rect-
+tracking machinery for what's fundamentally a "draw a box, wait, remove
+it" behavior. See `docs/DECISIONS.md` for the full reasoning and the
+parts breakdown.
 
 - [x] **Part B.1 — Vision model structured output.** `vision/model.py`:
       added `VisionModel.locate(image, target)`, grammar-constrained (via
@@ -167,56 +170,151 @@ One box at a time, not a general shape/annotation system. See
       real-hardware pass to confirm the grammar actually produces valid,
       *semantically* sensible boxes (the grammar guarantees shape, not
       correctness — see the `locate()` docstring).
-- [x] **Part B.2 — Generalize `GlowAuraRenderer` to trace an arbitrary
-      rectangle.** `aura/renderer/base.py`: added `show_target_box(x, y,
-      w, h)` / `clear_target_box()` to the `AuraRenderer` interface (with
-      the untrusted-input contract documented on `show_target_box`).
-      `aura/renderer/null_renderer.py` and `aura/controller.py`: log-only
-      / passthrough implementations, completing the interface contract.
-      `aura/renderer/glow_renderer.py`: `_build_blurred_mask()`
-      generalized to take a `target_rect` and draw the 4 seed bands along
-      *its* edges instead of always the canvas's; `_AuraOverlayWidget`
-      gained `_target_rect` + `set_target_rect()` and a rect-aware mask
-      cache key. `GlowAuraRenderer` gained `_screen_rect` (the "home"
-      rect), a second `QVariantAnimation` (`_rect_animation`,
-      `BOX_TRANSITION_MS` = 600ms, separate from the color fade's
-      `TRANSITION_MS`) morphing `_current_rect` between the screen edge
-      and a target box, and `show_target_box()`/`clear_target_box()`
-      themselves. `_clamp_target_rect()` defensively clamps untrusted
-      `(x, y, w, h)` (e.g. straight from `locate()`) to stay fully
-      on-screen with each dimension at least `MIN_BOX_SIZE_PX` — a
-      caller can't hang a box off the screen edge or shrink it into a
-      degenerate blob.
-      **Verified for real** (this sandbox has no display but does have
-      Xvfb/`QT_QPA_PLATFORM=offscreen`, same approach as Milestone 6):
-      constructed a real `GlowAuraRenderer` + `QApplication`, called
+- [x] **Part B.2 — Renderer support for a flashed target box.**
+      **Design revision (2026-07-14):** originally implemented as
+      morphing `GlowAuraRenderer`'s ambient glow itself into a box shape
+      (a second `QVariantAnimation`, rect-aware mask caching, clamping in
+      `_clamp_target_rect()`). That version worked and was verified
+      offscreen, but was replaced same-day with a much simpler design:
+      a separate, plain rectangle outline that flashes for
+      `TARGET_BOX_DURATION_MS` (2.5s) and disappears on its own — no
+      animation, no morphing, no interaction with the ambient glow's mask
+      at all. See `docs/DECISIONS.md` for the full reasoning.
+      `aura/renderer/base.py`: `show_target_box(x, y, w, h)` /
+      `clear_target_box()` on the `AuraRenderer` interface (contract
+      docstrings updated to describe a flash, not a morph).
+      `aura/renderer/null_renderer.py` / `aura/controller.py`: log-only /
+      passthrough implementations, unchanged in shape.
+      `aura/renderer/glow_renderer.py`: new `_TargetBoxWidget` — its own
+      frameless/click-through/always-on-top overlay, sized to the screen
+      once in `initialize()`, with a `flash(rect, color)` method that
+      paints one outline and starts a single-shot auto-hide `QTimer`.
+      `GlowAuraRenderer` keeps `_screen_rect` (for clamping) and owns a
+      `_target_box_widget`; `show_target_box()` clamps the untrusted
+      `(x, y, w, h)` via `_clamp_target_rect()` (still enforces
+      `MIN_BOX_SIZE_PX`, now 40px — no longer tied to the glow's seed-band
+      width since this widget doesn't blur anything), translates to the
+      widget's local coordinates, and calls `flash()`; `clear_target_box()`
+      just stops the timer and hides the widget immediately. The
+      Milestone 6 ambient-glow widget (`_AuraOverlayWidget`,
+      `_build_blurred_mask()`) is back to exactly its pre-Milestone-7
+      shape — no `target_rect` awareness left in it at all.
+      **Verified for real** (offscreen `QT_QPA_PLATFORM=offscreen`, same
+      approach as Milestone 6/the original B.2): constructed a real
+      `GlowAuraRenderer` + `QApplication`, called
       `show_target_box()`/`clear_target_box()` through the real
-      `AuraController`, pumped the Qt event loop through the real
-      600ms animation, and read back actual painted mask pixels —
-      confirmed the blurred band sits at the target rect's edge (alpha
-      94) and not its center (alpha 0), confirmed the rect lands exactly
-      on the requested box, confirmed `clear_target_box()` returns
-      exactly to the screen rect, and confirmed an out-of-bounds/
-      undersized box (`x=-500, y=-500, w=3, h=3`) gets clamped fully
-      on-screen at `MIN_BOX_SIZE_PX`. Also confirmed `NullAuraRenderer`
-      still instantiates (proves both concrete renderers satisfy the new
-      abstract methods) and that a `set_state()` color change still works
-      independently of an active target box. Not a mock/fake test — real
-      Qt widgets, real `QGraphicsBlurEffect`, real animation playback.
-- [ ] **Part B.3 — Wiring.** `found=True` → new `show_target_box(x, y, w,
-      h)` on the aura controller (percent-to-pixel conversion happens
-      here, using the known screen-capture geometry). `found=False` /
-      parse failure → `AuraState.ERROR` (already red, already wired) +
-      a reply asking the user if they want to try again. Not started —
-      `main.py` doesn't call `VisionModel.locate()` or
-      `AuraController.show_target_box()`/`clear_target_box()` yet.
-- [ ] **Part B.4 — Reverting to full-screen edges.** Two triggers: (1)
-      the next query comes in, (2) the cursor dwells inside the target
-      box for ~4 seconds (matches the existing breathing-pulse period —
-      needs a `QTimer` polling `QCursor.pos()` against the box rect, or
-      an event filter).
+      `AuraController`, grabbed the widget's actual painted pixels and
+      confirmed the outline stroke is opaque while the box interior stays
+      fully transparent (outline only, no fill), confirmed
+      `clear_target_box()` hides immediately (not a morph-back), confirmed
+      the auto-hide `QTimer` is running after a flash, and confirmed both
+      the out-of-bounds clamp and the `MIN_BOX_SIZE_PX` minimum-size
+      clamp still work on the new, simpler code path. Existing test suite
+      (15 tests outside `test_settings.py`/`test_transcriber.py`, which
+      fail in this sandbox for unrelated missing-package reasons) still
+      passes unchanged. Not a mock/fake test — real Qt widgets, real
+      paint, real timers.
+- [x] **Part B.3 — Wiring.** Done (2026-07-14). `main.py`'s
+      `_build_prompt_with_screen_context()` now calls
+      `VisionModel.locate(image, text)` when the query matches the new
+      `vision.locate_trigger_keywords` (default `where, find, point, show
+      me, locate` — same keyword-gating pattern as the existing
+      `vision.trigger_keywords` for captioning/OCR, added to
+      `config/schema.py`'s `VisionSettings` and `config/default_config.yaml`).
+      `found=True` → percent coordinates converted to real screen pixels
+      via the new pure `_percent_box_to_pixels()` helper (uses the known
+      screen-capture monitor geometry, resolved once at startup via
+      `ScreenCapture.list_monitors()`), then handed across the
+      worker-thread → Qt-main-thread boundary by the new
+      `app/vision_locate_bridge.py:VisionLocateBridge` (same
+      Signal-based pattern as the other `app/*_bridge.py` files) to
+      `AuraController.show_target_box()`. `found=False` / a `locate()`
+      exception → routed through the existing `LLMResponseBridge
+      .report_failure()` path, which already drives `AuraState.ERROR`
+      and a text reply — reused as-is rather than adding a parallel
+      failure path, per the original B.3 scoping. Generation is skipped
+      entirely for that query (`_generate_worker` returns early when
+      `_build_prompt_with_screen_context` returns `None`) rather than
+      still spending an LLM call on it.
+      **Verified for real** (offscreen `QT_QPA_PLATFORM=offscreen`, real
+      `QApplication` + real `AuraController`/`GlowAuraRenderer`, real Qt
+      signal/slot delivery across the worker-thread boundary,
+      `main.main()` run to completion): scripted three queries through
+      the real debug-text-input path with a fake `VisionModel`/
+      `LLMEngine`/`ScreenCapture` swapped in for the heavy/unavailable
+      deps — (1) a locate-keyword query that finds something → exactly
+      one real `AuraController.show_target_box()` call with a nonzero-size
+      box, generation still completes normally; (2) a locate-keyword query
+      that finds nothing → generation aborted, a "couldn't find... want to
+      try again?" reply reaches the window, no `show_target_box()` call;
+      (3) a query with no vision/locate keywords → vision skipped
+      entirely, generation still completes normally. `_percent_box_to_pixels`
+      also checked directly against a second-monitor-offset case
+      (non-zero `monitor_left`). Existing test suite (20 tests outside
+      `test_transcriber.py`, which fails in this sandbox for the same
+      unrelated `faster_whisper`-not-installed reason as before) passes
+      unchanged. Real config loading (`config.settings.get_settings()`)
+      confirmed to pick up the new `locate_trigger_keywords` field and
+      its default via the existing backfill logic, not just the schema
+      default in isolation.
+      **Minor polish item, not a bug:** the not-found retry reply
+      currently reaches the window pre-wrapped as `"(LLM error — see
+      logs: ...)"` (via reusing `on_llm_failed`'s formatting) rather than
+      as a plain sentence — functionally correct (right text content,
+      right `AuraState.ERROR`), just slightly confusing framing since
+      nothing about it is actually an LLM error. Worth a dedicated
+      `on_locate_failed` handler in Part B.4 or later if this bothers
+      real usage; left as-is here since Part B.3 was scoped to "reuse the
+      existing ERROR path," not to add a new one.
+      **Confirmed on real hardware (2026-07-14, Session 5, Windows
+      laptop, Quadro M3000M 4GB, debug text input):** query `"where's the
+      red button"` against a real on-screen image → real
+      `VisionModel.locate()` (MiniCPM-V-2.6, CPU-only inference) returned
+      `found=True` → `_percent_box_to_pixels()` produced correct real
+      screen coordinates `(576, 216, 1344, 648)` for that image's actual
+      position → `AuraController.show_target_box()` fired with no errors
+      → the LLM's final response correctly referenced the located
+      element. No exceptions anywhere in the chain. The box itself
+      wasn't *seen* on the first attempt purely because it auto-hid
+      (`TARGET_BOX_DURATION_MS`, 2.5s at the time) minutes before the
+      multi-minute CPU-bound vision pipeline finished — not a wiring
+      bug, a visibility-window/perf issue, see Session 5 notes below and
+      `TARGET_BOX_DURATION_MS` (now 8s, see `aura/renderer/glow_renderer.py`).
+- [ ] **Part B.4 — Early-dismiss triggers.** The flashed box already
+      disappears on its own after `TARGET_BOX_DURATION_MS`, but it should
+      also clear early via explicit `clear_target_box()` calls on two
+      triggers: (1) the next query comes in, (2) the cursor dwells inside
+      the box for ~4 seconds (matches the existing breathing-pulse period
+      — needs a `QTimer` polling `QCursor.pos()` against the box rect, or
+      an event filter). Not started, blocked on B.3.
 
 ## Loose ends / small items
+
+- [ ] **Real-hardware perf finding (2026-07-14, Session 5):** on the
+      Windows laptop (Quadro M3000M, 4GB VRAM), a single vision-gated
+      query took roughly 8 minutes end-to-end — `VisionModel.locate()`
+      alone took ~4 minutes (8 image slices, CPU-bound MiniCPM-V-2.6
+      encode/decode, ~19-24s per slice), and `describe()` (screen
+      captioning) ran *again* afterward for another ~4 minutes because
+      the laptop's existing `config.yaml` (predating this session, with
+      `llm.repo_id` already pointed at a 3B model) still had
+      `vision.trigger_keywords` set in a way that matched "where's the
+      red button" — the newer `locate_trigger_keywords`/`trigger_keywords`
+      split (see Part B.3, above) only helps once a config actually uses
+      it. Two follow-ups, neither started:
+      1. `llama-cpp-python` almost certainly installed CPU-only (`pip
+         install llama-cpp-python` doesn't pull CUDA wheels by default)
+         — worth trying a CUDA-enabled reinstall given real GPU hardware
+         is present, though 4GB VRAM is tight for a 3B LLM + MiniCPM-V-2.6
+         loaded simultaneously; may need `n_gpu_layers` tuning (partial
+         offload) rather than `-1`/full on both.
+      2. The laptop's live `%APPDATA%\Iris\config\config.yaml` needs its
+         `vision.trigger_keywords`/`locate_trigger_keywords` manually
+         synced to the split-keyword design (existing user config files
+         aren't auto-migrated to new *values*, only new *keys* get
+         backfilled — see `config/settings.py`'s backfill logic) so a
+         pure "where's X" query skips `describe()` entirely instead of
+         paying for both.
 
 - [x] **Fixed: Whisper transcription crashed permanently on real hardware
       with a CUDA/cuBLAS DLL error (2026-07-11).** First real-hardware run

@@ -36,14 +36,14 @@ class AuraController:
         self._renderer.set_state(state)
 
     def show_target_box(self, x: int, y: int, w: int, h: int) -> None:
-        """Morph Aura's outline to trace a specific screen region
-        (Milestone 7), in real screen pixel coordinates. See
+        """Flash an outline around a specific screen region (Milestone
+        7), in real screen pixel coordinates. See
         `AuraRenderer.show_target_box` for the untrusted-input contract.
         """
         self._renderer.show_target_box(x, y, w, h)
 
     def clear_target_box(self) -> None:
-        """Morph Aura's outline back to the full screen edge."""
+        """Dismiss the flashed target box immediately, if one is showing."""
         self._renderer.clear_target_box()
 
     @property

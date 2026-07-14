@@ -1,0 +1,69 @@
+app_name: Iris
+version: 0.1.0
+first_run: true
+logging:
+  level: INFO
+  console: true
+  file: true
+  max_bytes: 2000000
+  backup_count: 5
+aura:
+  enabled: true
+  theme: default
+voice:
+  wake_word_model: hey_jarvis
+  detection_threshold: 0.5
+  consecutive_frames_required: 2
+  cooldown_seconds: 1.5
+  input_device: null
+speech:
+  model_size: small
+  device: auto
+  compute_type: default
+  language: en
+  silence_rms_threshold: 300.0
+  end_silence_seconds: 1.0
+  initial_timeout_seconds: 3.0
+  max_duration_seconds: 10.0
+llm:
+  repo_id: Qwen/Qwen2.5-0.5B-Instruct-GGUF
+  filename: qwen2.5-0.5b-instruct-q4_k_m.gguf
+  local_model_path: null
+  n_ctx: 4096
+  n_gpu_layers: -1
+  temperature: 0.7
+  max_tokens: 512
+  system_prompt: You are Iris, a concise local AI desktop copilot. Keep answers short
+    and to the point unless the user asks for more detail.
+vision:
+  enabled: false
+  monitor_index: 0
+  save_debug_screenshots: false
+  debug_screenshot_dir: null
+  repo_id: moondream/moondream2-gguf
+  model_filename: moondream2-text-model-f16.gguf
+  mmproj_filename: moondream2-mmproj-f16.gguf
+  local_model_path: null
+  local_mmproj_path: null
+  n_ctx: 2048
+  n_gpu_layers: 0
+  max_tokens: 256
+  caption_prompt: Describe what's on this screen concisely, focusing on any visible
+    application windows, UI elements, and what the user appears to be doing.
+  trigger_keywords:
+  - screen
+  - see
+  - look
+  - this
+  - here
+  locate_trigger_keywords:
+  - where
+  - find
+  - point
+  - show me
+  - locate
+  ocr_enabled: true
+  ocr_min_confidence: 60.0
+  tesseract_cmd: null
+debug:
+  enabled: true
