@@ -331,7 +331,11 @@ parts breakdown.
       wired into `main.py` yet — no hotkey, no wake-word hookup, no
       working settings button, `app/main_window.py` untouched. See
       `docs/DECISIONS.md` for the "why a new module, not an
-      `AuraRenderer`" reasoning.
+      `AuraRenderer`" reasoning. A throwaway manual preview script,
+      `preview_island_manual_check.py` (repo root, not part of the app),
+      was added after this so the user could look at it on a real
+      monitor with Space/Esc to toggle state — not part of any
+      milestone part, safe to delete once Part B lands real triggers.
 - [ ] Part B — global hotkey + wake-word activation triggers.
 - [ ] Part C — real (if minimal) settings surface behind the gear icon.
 - [ ] Part D — retire `app/main_window.py`.
