@@ -536,6 +536,41 @@ parts breakdown.
       process start to window becoming usable, report back before
       deciding whether lazy-loading is worth it.
 
+- [x] **Milestone 11, Part A: per-turn latency instrumentation
+      (2026-07-16, Session 10).** `utils/timing.py`'s `TurnTimer` times
+      stt/vision/llm/tts per turn and logs a summary at INFO level. See
+      `docs/ROADMAP.md`'s Milestone 11 entry for the full description
+      and `main.py`'s `current_turn` docstring for the wiring. 12 new
+      real tests (`tests/test_timing.py`), plus the full existing suite
+      (52 tests total, excluding two files blocked by sandbox-missing
+      `pydantic`/`faster_whisper`) still passes unchanged. **Not yet run
+      on real hardware** — next session should launch Iris, run a few
+      real turns, and report back the actual `stt=/vision=/llm=/tts=`
+      numbers so Part B (streaming TTS) and Part C (barge-in) know what
+      they're actually optimizing.
+- [ ] **Known minor race, documented not fixed, in the Part A stale-
+      callback guard.** `current_turn["speaking_turn"]` correctly
+      prevents an interrupted previous turn's delayed `on_tts_finished`
+      from mis-clearing a *newer* turn's in-progress timer — the
+      realistic case, since LLM generation is far slower than
+      `TTSEngine.stop()` unblocking. But if a new turn somehow starts
+      *speaking* before the old turn's stop-triggered finished event
+      arrives (LLM generation faster than the stop callback — unlikely
+      but not impossible), the guard would incorrectly treat the new
+      turn's tts stage as finished. A fully correct fix needs each
+      `_speak_worker` call tagged with its own turn identity all the way
+      through `tts_bridge`'s Qt signal, which Milestone 11 Part C
+      (barge-in / generation cancellation) will need to build anyway —
+      revisit there rather than solving it twice.
+- [ ] Milestone 11, Part B — streaming TTS (speak first sentence while
+      LLM still generating). Not started.
+- [ ] Milestone 11, Part C — barge-in (stop playback + cancel in-flight
+      generation on a new wake word). Not started. Will need a
+      cancellation hook on `llm/engine.py`'s `generate()`, which doesn't
+      exist yet.
+- [ ] Milestone 11, Part D — sync Aura glow to real TTS playback
+      amplitude instead of a flat on/off SPEAKING state. Not started.
+
 ## Known issues
 
 - None currently open beyond the real-hardware verification gaps noted

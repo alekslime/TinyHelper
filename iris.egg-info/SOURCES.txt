@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 app/__init__.py
+app/dynamic_island.py
 app/llm_bridge.py
 app/locate_bridge.py
 app/main_window.py
@@ -33,13 +34,16 @@ iris.egg-info/top_level.txt
 llm/__init__.py
 llm/engine.py
 memory/__init__.py
+memory/store.py
 overlay/__init__.py
 speech/__init__.py
 speech/listening_session.py
 speech/transcriber.py
 tests/test_llm_engine.py
+tests/test_memory_store.py
 tests/test_ocr.py
 tests/test_settings.py
+tests/test_timing.py
 tests/test_transcriber.py
 tests/test_tts_engine.py
 tests/test_vision_model.py
@@ -47,6 +51,7 @@ tts/__init__.py
 tts/engine.py
 utils/__init__.py
 utils/logger.py
+utils/timing.py
 vision/__init__.py
 vision/capture.py
 vision/model.py

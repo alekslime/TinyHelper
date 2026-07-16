@@ -42,6 +42,7 @@ from config.paths import DATA_DIR, MODELS_DIR
 from config.settings import get_settings
 from memory.store import ConversationStore
 from utils.logger import setup_logging
+from utils.timing import TurnTimer
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,31 @@ def main() -> int:
     llm_bridge = LLMResponseBridge()
     vision_locate_bridge = VisionLocateBridge()
     tts_bridge = TTSBridge()
+
+    # Milestone 11, Part A: per-turn latency instrumentation. `main.py`
+    # assumes one turn in flight at a time (see e.g.
+    # `TTSSettings.interrupt_on_new_query` stopping previous playback when
+    # a new query starts), so a single mutable holder -- replaced wholesale
+    # each time a new wake word fires -- is enough to thread one
+    # `TurnTimer` through the main-thread callbacks below and the worker
+    # threads they spawn, without changing any Qt signal's payload type.
+    # See utils/timing.py's module docstring for the full design.
+    # `speaking_turn` guards against a real race: if a new wake word
+    # interrupts TTS still playing from the previous turn (existing
+    # `settings.tts.interrupt_on_new_query` behavior), `current_turn
+    # ["timer"]` has already been replaced with the *new* turn's timer by
+    # the time the *old* turn's `_speak_worker` unblocks and reports
+    # finished/failed. Without this, that stale callback would log the
+    # new (still in-progress) turn's incomplete summary and clear its
+    # timer out from under it. `speaking_turn` records which specific
+    # timer a start_stage("tts") belongs to, so on_tts_finished/
+    # on_tts_failed only touch `current_turn["timer"]` when the two still
+    # match — a stale callback for an already-superseded turn becomes a
+    # no-op instead. (Note: the *Aura visual state* still briefly flips to
+    # IDLE in that same stale-callback case, a separate, pre-existing race
+    # this doesn't fix — see docs/TODO.md, it's squarely what the planned
+    # barge-in milestone needs to resolve properly.)
+    current_turn: dict[str, TurnTimer | None] = {"timer": None, "speaking_turn": None}
 
     # Loaded eagerly (like the wake word / Whisper models) so the first
     # real utterance isn't delayed by a cold-start model load. Failure here
@@ -319,6 +345,16 @@ def main() -> int:
     def on_wake_word_detected(model_name: str, score: float) -> None:
         # Runs on the main thread (Qt queues the signal delivery for us).
         logger.info("Wake word '%s' detected (score=%.3f) — Aura -> LISTENING", model_name, score)
+        # Milestone 11, Part A: a new turn starts here. Any previous
+        # timer is simply dropped, unlogged, if it hadn't reached a
+        # terminal callback yet (e.g. this wake word interrupted TTS
+        # still playing from the last turn) -- an abandoned turn's
+        # partial timing isn't interesting, and on_transcribed already
+        # interrupts that previous turn's TTS via
+        # `settings.tts.interrupt_on_new_query`.
+        turn = TurnTimer()
+        turn.start_stage("stt")
+        current_turn["timer"] = turn
         aura.set_state(AuraState.LISTENING)
 
     def _build_prompt_with_screen_context(text: str) -> str | None:
@@ -445,13 +481,23 @@ def main() -> int:
         logger.debug("Screen context added to prompt: %r", context)
         return f"[{context}]\n\nUser: {text}"
 
-    def _generate_worker(text: str) -> None:
+    def _generate_worker(text: str, turn: TurnTimer | None) -> None:
         # Runs on a dedicated worker thread — never the audio callback
         # thread or the Qt main thread, same reasoning as transcription
         # (see docs/DECISIONS.md). Delivers its result back via llm_bridge.
+        # `turn` (Milestone 11, Part A) times the vision and llm stages of
+        # whichever turn this worker belongs to -- may be None only if
+        # this worker somehow started without on_wake_word_detected having
+        # run first, which shouldn't happen via any real code path here,
+        # but every use below is still None-guarded rather than asserted,
+        # since a missing timer should never take down actual generation.
         assert llm_engine is not None  # only started when it loaded successfully
         try:
-            prompt = _build_prompt_with_screen_context(text)
+            if turn is not None:
+                with turn.stage("vision"):
+                    prompt = _build_prompt_with_screen_context(text)
+            else:
+                prompt = _build_prompt_with_screen_context(text)
             if prompt is None:
                 # Milestone 7, Part B.3: locate() found nothing to point
                 # at for this query. The retry-prompt failure was already
@@ -476,17 +522,28 @@ def main() -> int:
             if conversation_store is not None and settings.memory.context_turns > 0:
                 try:
                     recent = conversation_store.get_recent_turns(limit=settings.memory.context_turns)
-                    history = [(turn["query"], turn["response"]) for turn in reversed(recent)]
+                    history = [
+                        (past_turn["query"], past_turn["response"]) for past_turn in reversed(recent)
+                    ]
                 except Exception:
                     logger.exception("Failed to fetch conversation history — continuing without it.")
                     history = []
 
-            response = llm_engine.generate(
-                prompt,
-                max_tokens=settings.llm.max_tokens,
-                temperature=settings.llm.temperature,
-                history=history,
-            )
+            if turn is not None:
+                with turn.stage("llm"):
+                    response = llm_engine.generate(
+                        prompt,
+                        max_tokens=settings.llm.max_tokens,
+                        temperature=settings.llm.temperature,
+                        history=history,
+                    )
+            else:
+                response = llm_engine.generate(
+                    prompt,
+                    max_tokens=settings.llm.max_tokens,
+                    temperature=settings.llm.temperature,
+                    history=history,
+                )
             if response:
                 # Milestone 9, Part A: persist the turn as it happens.
                 # Runs on this worker thread (a new one per query) --
@@ -526,6 +583,12 @@ def main() -> int:
         # generates a response on a worker thread; on_llm_response /
         # on_llm_failed bring it back to IDLE (or ERROR) once that's done.
         logger.info('Transcribed: "%s" — Aura -> THINKING', text)
+        # Milestone 11, Part A: STT (in the broad sense of "wake word to
+        # transcript" -- includes listening-session silence detection, not
+        # just the Whisper call itself) ends here.
+        turn = current_turn["timer"]
+        if turn is not None:
+            turn.end_stage("stt")
         # Milestone 7, Part B.4: a target box from a *previous* query
         # shouldn't linger once a new one has started — dismiss it
         # immediately rather than waiting for TARGET_BOX_DURATION_MS or a
@@ -544,9 +607,12 @@ def main() -> int:
             logger.warning("No LLM available — skipping generation.")
             window.show_response("(No LLM available this session — see logs.)")
             aura.set_state(AuraState.IDLE)
+            if turn is not None:
+                logger.info("Turn latency: %s", turn.summary())
+                current_turn["timer"] = None
             return
 
-        threading.Thread(target=_generate_worker, args=(text,), daemon=True).start()
+        threading.Thread(target=_generate_worker, args=(text, turn), daemon=True).start()
 
     def on_llm_response(text: str) -> None:
         # Runs on the main thread. Milestone 8: if voice output is
@@ -556,17 +622,35 @@ def main() -> int:
         # IDLE, exactly as before this milestone.
         logger.info('LLM response ready (%d chars)', len(text))
         window.show_response(text)
+        turn = current_turn["timer"]
         if tts_engine is not None:
             logger.info("Speaking response — Aura -> SPEAKING")
+            # Milestone 11, Part A: tts stage starts here, ends in
+            # on_tts_finished/on_tts_failed — the turn's final stage, so
+            # the full summary gets logged there, not here.
+            if turn is not None:
+                turn.start_stage("tts")
+                current_turn["speaking_turn"] = turn
             aura.set_state(AuraState.SPEAKING)
             threading.Thread(target=_speak_worker, args=(text,), daemon=True).start()
         else:
+            # No TTS configured this session — the turn ends here.
+            if turn is not None:
+                logger.info("Turn latency: %s", turn.summary())
+                current_turn["timer"] = None
             aura.set_state(AuraState.IDLE)
 
     def on_llm_failed(message: str) -> None:
         # Runs on the main thread.
         logger.error("LLM generation failed: %s", message)
         window.show_response(f"(LLM error — see logs: {message})")
+        # Milestone 11, Part A: the turn ends here on failure too — a
+        # failed generation still spent real time in stt/vision/llm worth
+        # logging, even without a response to speak.
+        turn = current_turn["timer"]
+        if turn is not None:
+            logger.info("Turn latency (failed): %s", turn.summary())
+            current_turn["timer"] = None
         aura.set_state(AuraState.ERROR)
 
     def on_tts_finished() -> None:
@@ -574,6 +658,16 @@ def main() -> int:
         # TTSEngine.stop() when a new query interrupted it) — either way,
         # nothing more to speak right now.
         logger.info("TTS playback finished — Aura -> IDLE")
+        # Milestone 11, Part A: last stage of a normal turn — log the full
+        # summary here. Only if this callback still belongs to the turn
+        # that's actually current — see current_turn's docstring above for
+        # the stale-callback race this guards against.
+        turn = current_turn["timer"]
+        if turn is not None and turn is current_turn["speaking_turn"]:
+            turn.end_stage("tts")
+            logger.info("Turn latency: %s", turn.summary())
+            current_turn["timer"] = None
+        current_turn["speaking_turn"] = None
         aura.set_state(AuraState.IDLE)
 
     def on_tts_failed(message: str) -> None:
@@ -583,12 +677,25 @@ def main() -> int:
         # degrades to IDLE rather than AuraState.ERROR (which would imply
         # the query itself failed, which it didn't).
         logger.error("TTS playback failed: %s", message)
+        turn = current_turn["timer"]
+        if turn is not None and turn is current_turn["speaking_turn"]:
+            turn.end_stage("tts")
+            logger.info("Turn latency (tts failed): %s", turn.summary())
+            current_turn["timer"] = None
+        current_turn["speaking_turn"] = None
         aura.set_state(AuraState.IDLE)
 
     def on_no_speech_detected() -> None:
         # Runs on the main thread. Wake word fired but nothing was said
         # (or transcription was unavailable) — just go back to idle.
         logger.info("No speech recognized — Aura -> IDLE")
+        # Milestone 11, Part A: the turn ends here too — the stt stage
+        # (wake word to this callback) is the only thing that ran.
+        turn = current_turn["timer"]
+        if turn is not None:
+            turn.end_stage("stt")
+            logger.info("Turn latency (no speech): %s", turn.summary())
+            current_turn["timer"] = None
         aura.set_state(AuraState.IDLE)
 
     def on_target_box_found(x: int, y: int, w: int, h: int) -> None:

@@ -107,6 +107,42 @@ access now lives inside the island rather than as a separate screen.
 - [ ] Part D — Retire `app/main_window.py`'s always-visible placeholder
       window now that the island covers its debug/interaction role.
 
+## Milestone 11 — Realtime Responsiveness (in progress)
+
+Four related but distinct pieces of work, split out as their own
+milestone rather than folded into Milestone 10 (Dynamic Island), since
+none of the four touch the island UI itself — they're about the
+underlying voice pipeline in `main.py`/`voice/`/`tts/`. Order chosen
+deliberately: measure first, then optimize/interrupt.
+
+- [x] **Part A — Latency instrumentation.** `utils/timing.py`'s
+      `TurnTimer` times each stage of a turn (stt / vision / llm / tts)
+      and logs a one-line summary (e.g. `stt=340ms llm=890ms tts=210ms
+      total=1.44s`) at INFO level once a turn reaches a terminal state
+      (TTS finished/failed, LLM failed, no speech detected, or no TTS
+      configured this session). Wired through `main.py`'s existing
+      bridge/worker-thread structure via a `current_turn` holder — see
+      that variable's docstring in `main.py` for the full design,
+      including a real race it guards against (a new wake word
+      interrupting still-playing TTS from the previous turn must not
+      let that previous turn's delayed "finished" callback mis-log or
+      clear the *new* turn's in-progress timer). 12 real tests in
+      `tests/test_timing.py`. **Not yet run on real hardware** — next
+      session should report back actual stage numbers from a live run
+      (that's the whole point: know where time is actually going before
+      Part B/C change anything).
+- [ ] Part B — Streaming TTS: speak the first sentence while the LLM is
+      still generating the rest, instead of waiting for the full
+      response.
+- [ ] Part C — Barge-in: saying "Hey Iris" while Iris is mid-speech
+      immediately stops Piper playback *and* cancels in-flight LLM
+      generation (not just playback — see docs/DECISIONS.md once this
+      part starts, since `llm/engine.py`'s `generate()` call currently
+      has no cancellation hook and will need one).
+- [ ] Part D — Visual feedback sync: sync the Aura glow/waveform to
+      Piper's actual playback amplitude in real time, rather than the
+      current flat "on for the whole SPEAKING state" glow.
+
 ## Later / Out of scope for MVP
 
 - Mouse/keyboard automation (`automation/`)
