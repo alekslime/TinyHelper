@@ -24,6 +24,9 @@ Requires-Dist: opencv-python>=4.10.0; extra == "vision"
 Requires-Dist: llama-cpp-python>=0.2.90; extra == "vision"
 Requires-Dist: huggingface_hub>=0.23.0; extra == "vision"
 Requires-Dist: pytesseract>=0.3.10; extra == "vision"
+Provides-Extra: tts
+Requires-Dist: piper-tts>=1.2.0; extra == "tts"
+Requires-Dist: sounddevice>=0.4.6; extra == "tts"
 Provides-Extra: windows
 Requires-Dist: pywin32>=306; sys_platform == "win32" and extra == "windows"
 Provides-Extra: dev

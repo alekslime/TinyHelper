@@ -6,6 +6,7 @@ app/llm_bridge.py
 app/locate_bridge.py
 app/main_window.py
 app/transcript_bridge.py
+app/tts_bridge.py
 app/vision_locate_bridge.py
 app/wake_word_bridge.py
 aura/__init__.py
@@ -40,7 +41,10 @@ tests/test_llm_engine.py
 tests/test_ocr.py
 tests/test_settings.py
 tests/test_transcriber.py
+tests/test_tts_engine.py
 tests/test_vision_model.py
+tts/__init__.py
+tts/engine.py
 utils/__init__.py
 utils/logger.py
 vision/__init__.py

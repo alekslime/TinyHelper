@@ -6,6 +6,7 @@ llm
 memory
 overlay
 speech
+tts
 utils
 vision
 voice
