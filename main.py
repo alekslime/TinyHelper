@@ -102,10 +102,21 @@ def _percent_box_to_pixels(
     arithmetic Part B.3 needed, kept as small and isolated as possible).
     """
     img_w, img_h = image_size
-    x = monitor_left + round(location.x / 100 * img_w)
-    y = monitor_top + round(location.y / 100 * img_h)
-    w = round(location.w / 100 * img_w)
-    h = round(location.h / 100 * img_h)
+
+    # `location.x/y/w/h` are individually valid (0-100 each, see
+    # VisionLocation) but not guaranteed to be valid *together* -- e.g.
+    # x=100, w=100 is each in-range but describes a box entirely past
+    # the right edge of the frame. Clip w/h against the remaining room
+    # after x/y so the box is always fully inside the captured frame.
+    x_pct = max(0, min(100, location.x))
+    y_pct = max(0, min(100, location.y))
+    w_pct = max(0, min(100 - x_pct, location.w))
+    h_pct = max(0, min(100 - y_pct, location.h))
+
+    x = monitor_left + round(x_pct / 100 * img_w)
+    y = monitor_top + round(y_pct / 100 * img_h)
+    w = round(w_pct / 100 * img_w)
+    h = round(h_pct / 100 * img_h)
     return x, y, w, h
 
 
@@ -265,8 +276,10 @@ def main() -> int:
         )
 
         locate_keywords = settings.vision.locate_trigger_keywords
-        should_locate = vision_model is not None and (
-            not locate_keywords or any(kw.lower() in text.lower() for kw in locate_keywords)
+        should_locate = (
+            settings.vision.enable_locate
+            and vision_model is not None
+            and (not locate_keywords or any(kw.lower() in text.lower() for kw in locate_keywords))
         )
 
         if not should_caption_or_ocr and not should_locate:
@@ -395,6 +408,12 @@ def main() -> int:
         # generates a response on a worker thread; on_llm_response /
         # on_llm_failed bring it back to IDLE (or ERROR) once that's done.
         logger.info('Transcribed: "%s" — Aura -> THINKING', text)
+        # Milestone 7, Part B.4: a target box from a *previous* query
+        # shouldn't linger once a new one has started — dismiss it
+        # immediately rather than waiting for TARGET_BOX_DURATION_MS or a
+        # cursor dwell that may never happen. Safe to call even when no
+        # box is currently showing (see AuraController.clear_target_box).
+        aura.clear_target_box()
         aura.set_state(AuraState.THINKING)
 
         if llm_engine is None:

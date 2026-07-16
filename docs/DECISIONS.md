@@ -861,3 +861,61 @@ than mechanism: since the box now disappears on its own, B.4 becomes
 about calling `clear_target_box()` early (next query, cursor dwell)
 rather than "reverting to the full-screen edge," since there's no
 morph-back state left to revert to.
+
+## Milestone 7, Part B.4: early-dismiss triggers (2026-07-16)
+
+**What was built:** two triggers that call `clear_target_box()` before
+`TARGET_BOX_DURATION_MS` elapses on its own:
+
+1. **Next query.** `main.py`'s `on_transcribed()` now calls
+   `aura.clear_target_box()` as its first line, before the THINKING state
+   transition -- covers both real voice input and the debug-text path
+   (`on_debug_text_submitted()` calls `on_transcribed()` under the hood).
+   A no-op if no box is currently showing.
+2. **Cursor dwell.** `_TargetBoxWidget` gained a second `QTimer`
+   (`_dwell_timer`, polling every `DWELL_POLL_INTERVAL_MS` = 150ms) that
+   checks `QCursor.pos()` (translated to the widget's local coordinates
+   via `mapFromGlobal`) against the currently-showing `_rect`. Continuous
+   containment for `DWELL_DISMISS_MS` (4000ms) dismisses the box early;
+   leaving the rect at any point resets the dwell clock (`_dwell_start =
+   None`) rather than accumulating partial dwell time across separate
+   visits.
+
+**Why polling instead of a Qt event filter/hover events:** `_TargetBoxWidget`
+already has `WA_TransparentForMouseEvents` set (Milestone 7, Part B.2) so
+clicks/hover pass through to whatever's underneath -- required, since this
+is a decorative overlay, not something the user should have to click
+around. That makes native Qt hover/enter events unavailable to this widget
+by construction, so polling `QCursor.pos()` globally (rather than relying
+on the widget receiving mouse events) is the straightforward way to know
+where the cursor is without giving up click-through. A 150ms poll is cheap
+enough not to matter and frequent enough that the dismiss feels responsive
+against a 4s dwell target.
+
+**Where "matches the breathing-pulse period" went:** `docs/TODO.md`'s
+original Part B.4 scoping said the dwell duration should match the
+ambient glow's breathing-pulse period. That mechanism (`BREATH_PERIOD_S`,
+an alpha pulse) was replaced by the rotating multicolor gradient
+(`ROTATION_PERIOD_S` = 9.0s) before B.4 was implemented -- see this
+module's docstring in `glow_renderer.py`. Rather than anchor to a
+period that no longer exists (or arbitrarily borrow `ROTATION_PERIOD_S`,
+which has nothing to do with dwell semantics), `DWELL_DISMISS_MS` = 4000
+is defined as its own standalone constant. Picked as a round number that
+feels long enough to mean "actually looked at it, not just passed the
+mouse over it," not measured against real usage yet -- same caveat as
+`TARGET_BOX_DURATION_MS`.
+
+**Verification:** offscreen (`QT_QPA_PLATFORM=offscreen`), real
+`QApplication` + `GlowAuraRenderer` + `AuraController`, real
+`_TargetBoxWidget`/timers. Confirmed: `clear_target_box()` hides an
+active box immediately; a continuous simulated dwell (monkeypatching
+`time.monotonic` rather than sleeping wall-clock `DWELL_DISMISS_MS`)
+past the threshold dismisses the box and stops both timers; moving the
+cursor outside the box resets the dwell clock without dismissing early;
+the pre-existing `TARGET_BOX_DURATION_MS` auto-hide path still fires
+independently and also stops dwell polling on its own. Existing 15-test
+suite (outside the two pre-existing missing-package collection failures,
+`test_settings.py`/`test_transcriber.py`) unaffected.
+**Not yet verified on real hardware** -- needs a real display and a real
+mouse to confirm the dwell feels right and that click-through still holds
+with the new polling timer running.

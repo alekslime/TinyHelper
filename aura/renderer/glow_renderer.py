@@ -41,7 +41,16 @@ import math
 import time
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRect, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QConicalGradient, QGuiApplication, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QConicalGradient,
+    QCursor,
+    QGuiApplication,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene, QWidget
 
 from aura.renderer.base import AuraRenderer
@@ -101,6 +110,20 @@ TARGET_BOX_STROKE_PX = 3
 # as a meaningless sliver rather than pointing at anything legible. Not
 # yet tuned against a real display -- see docs/DECISIONS.md.
 MIN_BOX_SIZE_PX = 40
+
+# Milestone 7, Part B.4: how long the cursor must stay inside the target
+# box before it's treated as "already seen it" and dismissed early. The
+# original plan (docs/TODO.md) was to match this to the ambient glow's
+# breathing-pulse period, but that mechanism no longer exists -- it was
+# replaced by the rotating multicolor gradient (see this module's
+# docstring) before B.4 was implemented. Picked as a standalone fixed
+# value instead; not yet tuned against real usage.
+DWELL_DISMISS_MS = 4000
+
+# How often the cursor position is polled against the box's rect while a
+# box is showing. Small enough that the dwell dismiss feels responsive,
+# large enough not to matter for CPU usage on any real hardware.
+DWELL_POLL_INTERVAL_MS = 150
 
 
 def _shortest_hue_delta(start_deg: float, end_deg: float) -> float:
@@ -299,23 +322,66 @@ class _TargetBoxWidget(QWidget):
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self.hide)
+        self._hide_timer.timeout.connect(self._on_auto_hide_timeout)
+
+        # Milestone 7, Part B.4: cursor-dwell early dismiss. `_dwell_start`
+        # is a `time.monotonic()` timestamp for when the cursor most
+        # recently entered the box (None whenever it's outside), reset
+        # every time the cursor leaves so a dwell has to be continuous.
+        self._dwell_start: float | None = None
+        self._dwell_timer = QTimer(self)
+        self._dwell_timer.timeout.connect(self._check_dwell)
 
     def flash(self, rect: QRect, color: QColor) -> None:
         """Show `rect` (already in this widget's own local coordinates --
         callers must position/size this widget to match the target
         screen geometry beforehand) outlined in `color`, restarting the
-        auto-hide timer if a box is already showing.
+        auto-hide timer (and the cursor-dwell tracking, Part B.4) if a
+        box is already showing.
         """
         self._rect = QRect(rect)
         self._color = QColor(color)
+        self._dwell_start = None
         self.update()
         self.show()
         self._hide_timer.start(TARGET_BOX_DURATION_MS)
+        self._dwell_timer.start(DWELL_POLL_INTERVAL_MS)
 
     def stop(self) -> None:
-        """Cancel the auto-hide timer (e.g. on app shutdown)."""
+        """Cancel the auto-hide timer and the cursor-dwell polling (Part
+        B.4) -- e.g. on the next query (via
+        `GlowAuraRenderer.clear_target_box()`) or on app shutdown. Safe
+        to call redundantly, whether or not a box is currently showing.
+        """
         self._hide_timer.stop()
+        self._dwell_timer.stop()
+        self._dwell_start = None
+
+    def _on_auto_hide_timeout(self) -> None:
+        # The box's own TARGET_BOX_DURATION_MS elapsed naturally -- stop
+        # polling for a dwell dismiss too, nothing left to dismiss early.
+        self._dwell_timer.stop()
+        self._dwell_start = None
+        self.hide()
+
+    def _check_dwell(self) -> None:
+        """Part B.4: poll the cursor's position against the currently
+        showing box. If it's been continuously inside the box for
+        `DWELL_DISMISS_MS`, treat that as "the person already looked at
+        it" and dismiss early rather than waiting out the full
+        `TARGET_BOX_DURATION_MS`.
+        """
+        if self._rect is None:
+            return
+        local_pos = self.mapFromGlobal(QCursor.pos())
+        if self._rect.contains(local_pos):
+            if self._dwell_start is None:
+                self._dwell_start = time.monotonic()
+            elif (time.monotonic() - self._dwell_start) * 1000 >= DWELL_DISMISS_MS:
+                self.stop()
+                self.hide()
+        else:
+            self._dwell_start = None
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming convention)
         if self._rect is None:

@@ -161,7 +161,16 @@ class VisionModel:
         local_mmproj_path: str | None = None,
         n_ctx: int = DEFAULT_N_CTX,
         n_gpu_layers: int = DEFAULT_N_GPU_LAYERS,
+        verbose: bool = False,
     ) -> None:
+        """`verbose=True` surfaces llama.cpp's own internal logging --
+        notably the `clip_image_preprocess`/`nx=`/`ny=` lines describing
+        the resized-image size the vision encoder actually sees. Kept
+        `False` by default (production/normal use, matches prior
+        behavior exactly) since it's noisy; diagnostics like
+        `test_vision.py`'s locate() mode should pass `True` explicitly
+        when they need to correlate raw locate() output against the
+        model's real internal resize geometry (see HANDOFF.md)."""
         try:
             if local_model_path:
                 if not local_mmproj_path:
@@ -175,14 +184,14 @@ class VisionModel:
                     n_ctx,
                 )
                 chat_handler = MiniCPMv26ChatHandler(
-                    clip_model_path=local_mmproj_path, verbose=False
+                    clip_model_path=local_mmproj_path, verbose=verbose
                 )
                 self._model = Llama(
                     model_path=local_model_path,
                     chat_handler=chat_handler,
                     n_ctx=n_ctx,
                     n_gpu_layers=n_gpu_layers,
-                    verbose=False,
+                    verbose=verbose,
                 )
             else:
                 logger.info(
@@ -196,7 +205,7 @@ class VisionModel:
                 chat_handler = MiniCPMv26ChatHandler.from_pretrained(
                     repo_id=repo_id,
                     filename=mmproj_filename,
-                    verbose=False,
+                    verbose=verbose,
                 )
                 self._model = Llama.from_pretrained(
                     repo_id=repo_id,
@@ -204,7 +213,7 @@ class VisionModel:
                     chat_handler=chat_handler,
                     n_ctx=n_ctx,
                     n_gpu_layers=n_gpu_layers,
-                    verbose=False,
+                    verbose=verbose,
                 )
         except Exception as exc:
             target = local_model_path or f"{repo_id}/{model_filename}"
@@ -317,13 +326,24 @@ class VisionModel:
 
         try:
             data = json.loads(raw)
+            # NOTE: LlamaGrammar.from_json_schema only enforces *type*
+            # (integer/string/bool/object shape), not the schema's
+            # "minimum"/"maximum" keywords -- llama.cpp's JSON-schema-to-
+            # GBNF conversion has no numeric-range support, so those are
+            # silently ignored at generation time. A model can and does
+            # emit integers outside 0-100 (e.g. x=1540) despite the
+            # schema nominally requiring 0-100, which upstream
+            # (_percent_box_to_pixels in main.py) then multiplies as if
+            # it *were* a valid percent, producing wildly off-screen
+            # pixel coordinates. Clamp here so a VisionLocation is
+            # actually the 0-100 percent contract its docstring promises.
             return VisionLocation(
                 found=bool(data["found"]),
                 label=str(data.get("label", "")),
-                x=int(data["x"]),
-                y=int(data["y"]),
-                w=int(data["w"]),
-                h=int(data["h"]),
+                x=max(0, min(100, int(data["x"]))),
+                y=max(0, min(100, int(data["y"]))),
+                w=max(0, min(100, int(data["w"]))),
+                h=max(0, min(100, int(data["h"]))),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             logger.warning(
