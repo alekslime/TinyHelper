@@ -36,6 +36,10 @@ vision = [
     "huggingface_hub>=0.23.0",
     "pytesseract>=0.3.10",
 ]
+tts = [
+    "piper-tts>=1.2.0",
+    "sounddevice>=0.4.6",
+]
 windows = [
     "pywin32>=306; sys_platform == 'win32'",
 ]
@@ -55,7 +59,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "aura*", "voice*", "speech*", "llm*", "vision*", "overlay*", "memory*", "automation*", "config*", "utils*"]
+include = ["app*", "aura*", "voice*", "speech*", "llm*", "vision*", "tts*", "overlay*", "memory*", "automation*", "config*", "utils*"]
 
 [tool.black]
 line-length = 100

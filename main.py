@@ -10,7 +10,9 @@ Responsible only for wiring things together:
        main thread.
     6. If enabled, construct screen capture + a vision model, so each
        query can be augmented with a caption of the current screen.
-    7. Launch the Qt application and a minimal window.
+    7. If enabled, construct a local TTS voice, so each LLM response can
+       be spoken aloud in addition to being shown in the window.
+    8. Launch the Qt application and a minimal window.
 
 No feature logic belongs here — this file should stay small forever.
 """
@@ -26,12 +28,14 @@ from PySide6.QtWidgets import QApplication
 from app.llm_bridge import LLMResponseBridge
 from app.main_window import MainWindow
 from app.transcript_bridge import TranscriptBridge
+from app.tts_bridge import TTSBridge
 from app.vision_locate_bridge import VisionLocateBridge
 from app.wake_word_bridge import WakeWordBridge
 from aura.controller import AuraController
 from aura.renderer.glow_renderer import GlowAuraRenderer
 from aura.renderer.null_renderer import NullAuraRenderer
 from aura.states import AuraState
+from config.paths import MODELS_DIR
 from config.settings import get_settings
 from utils.logger import setup_logging
 
@@ -79,6 +83,18 @@ except ImportError:
     VisionModel = None  # type: ignore[assignment,misc]
     OCRReader = None  # type: ignore[assignment,misc]
     _VISION_AVAILABLE = False
+
+# `tts.engine` depends on the optional "tts" extra (piper-tts, sounddevice)
+# — see pyproject.toml and docs/DECISIONS.md. Same defensive-import
+# treatment as voice/llm/vision above — Iris still launches without it,
+# just without spoken responses (text-only, as before this milestone).
+try:
+    from tts.engine import TTSEngine
+
+    _TTS_AVAILABLE = True
+except ImportError:
+    TTSEngine = None  # type: ignore[assignment,misc]
+    _TTS_AVAILABLE = False
 
 
 def _percent_box_to_pixels(
@@ -151,6 +167,7 @@ def main() -> int:
     transcript_bridge = TranscriptBridge()
     llm_bridge = LLMResponseBridge()
     vision_locate_bridge = VisionLocateBridge()
+    tts_bridge = TTSBridge()
 
     # Loaded eagerly (like the wake word / Whisper models) so the first
     # real utterance isn't delayed by a cold-start model load. Failure here
@@ -223,6 +240,34 @@ def main() -> int:
         logger.warning(
             "Vision dependencies not installed (pip install -e '.[vision]') — "
             "continuing without screen context this session."
+        )
+
+    # Milestone 8: local voice output (Piper). Loaded eagerly, same
+    # graceful-degradation shape as the LLM/vision models above — a failed
+    # load (or the extra not being installed) leaves tts_engine = None and
+    # Iris simply stays text-only, as it already was before this milestone.
+    tts_engine = None
+    if not settings.tts.enabled:
+        logger.info("Voice output disabled (tts.enabled=false in config).")
+    elif _TTS_AVAILABLE:
+        try:
+            tts_engine = TTSEngine(
+                voice=settings.tts.voice,
+                local_model_path=settings.tts.local_model_path,
+                local_config_path=settings.tts.local_config_path,
+                data_dir=MODELS_DIR / "tts",
+                use_cuda=settings.tts.use_cuda,
+                length_scale=settings.tts.length_scale,
+                noise_scale=settings.tts.noise_scale,
+                noise_w_scale=settings.tts.noise_w_scale,
+            )
+        except RuntimeError:
+            logger.exception("Could not load the TTS voice — continuing with text-only responses.")
+            tts_engine = None
+    else:
+        logger.warning(
+            "TTS dependencies not installed (pip install -e '.[tts]') — "
+            "continuing with text-only responses this session."
         )
 
     # Milestone 7, Part B.3: real on-screen offset of the monitor being
@@ -403,6 +448,19 @@ def main() -> int:
             logger.exception("LLM generation failed.")
             llm_bridge.report_failure(str(exc))
 
+    def _speak_worker(text: str) -> None:
+        # Runs on a dedicated worker thread — never the Qt main thread,
+        # since TTSEngine.speak() blocks until playback finishes. Delivers
+        # its result back via tts_bridge, same shape as _generate_worker /
+        # llm_bridge.
+        assert tts_engine is not None  # only started when it loaded successfully
+        try:
+            tts_engine.speak(text)
+            tts_bridge.report_finished()
+        except Exception as exc:
+            logger.exception("TTS playback failed.")
+            tts_bridge.report_failure(str(exc))
+
     def on_transcribed(text: str) -> None:
         # Runs on the main thread. Keeps Aura in THINKING while the LLM
         # generates a response on a worker thread; on_llm_response /
@@ -414,6 +472,12 @@ def main() -> int:
         # cursor dwell that may never happen. Safe to call even when no
         # box is currently showing (see AuraController.clear_target_box).
         aura.clear_target_box()
+        # Milestone 8: a spoken response still playing from the *previous*
+        # query shouldn't keep talking over a new one. Mirrors the target
+        # box's next-query dismiss above. Safe to call even when nothing is
+        # currently playing (see TTSEngine.stop()).
+        if tts_engine is not None and settings.tts.interrupt_on_new_query:
+            tts_engine.stop()
         aura.set_state(AuraState.THINKING)
 
         if llm_engine is None:
@@ -425,16 +489,41 @@ def main() -> int:
         threading.Thread(target=_generate_worker, args=(text,), daemon=True).start()
 
     def on_llm_response(text: str) -> None:
-        # Runs on the main thread.
-        logger.info('LLM response ready (%d chars) — Aura -> IDLE', len(text))
+        # Runs on the main thread. Milestone 8: if voice output is
+        # available, speak the response on a worker thread and let
+        # on_tts_finished/on_tts_failed bring Aura back to IDLE once
+        # playback ends — otherwise (no TTS this session) go straight to
+        # IDLE, exactly as before this milestone.
+        logger.info('LLM response ready (%d chars)', len(text))
         window.show_response(text)
-        aura.set_state(AuraState.IDLE)
+        if tts_engine is not None:
+            logger.info("Speaking response — Aura -> SPEAKING")
+            aura.set_state(AuraState.SPEAKING)
+            threading.Thread(target=_speak_worker, args=(text,), daemon=True).start()
+        else:
+            aura.set_state(AuraState.IDLE)
 
     def on_llm_failed(message: str) -> None:
         # Runs on the main thread.
         logger.error("LLM generation failed: %s", message)
         window.show_response(f"(LLM error — see logs: {message})")
         aura.set_state(AuraState.ERROR)
+
+    def on_tts_finished() -> None:
+        # Runs on the main thread. Playback ended (naturally, or via
+        # TTSEngine.stop() when a new query interrupted it) — either way,
+        # nothing more to speak right now.
+        logger.info("TTS playback finished — Aura -> IDLE")
+        aura.set_state(AuraState.IDLE)
+
+    def on_tts_failed(message: str) -> None:
+        # Runs on the main thread. The text response already reached the
+        # user via window.show_response() in on_llm_response — a playback
+        # failure is a lesser problem than a generation failure, so this
+        # degrades to IDLE rather than AuraState.ERROR (which would imply
+        # the query itself failed, which it didn't).
+        logger.error("TTS playback failed: %s", message)
+        aura.set_state(AuraState.IDLE)
 
     def on_no_speech_detected() -> None:
         # Runs on the main thread. Wake word fired but nothing was said
@@ -457,6 +546,8 @@ def main() -> int:
     llm_bridge.response_ready.connect(on_llm_response)
     llm_bridge.generation_failed.connect(on_llm_failed)
     vision_locate_bridge.box_found.connect(on_target_box_found)
+    tts_bridge.finished.connect(on_tts_finished)
+    tts_bridge.failed.connect(on_tts_failed)
 
     voice_service = None
     if _VOICE_AVAILABLE:
@@ -497,6 +588,8 @@ def main() -> int:
 
     if voice_service is not None:
         voice_service.stop()
+    if tts_engine is not None:
+        tts_engine.stop()
     aura.stop()
     logger.info("%s exited with code %s", settings.app_name, exit_code)
     return exit_code

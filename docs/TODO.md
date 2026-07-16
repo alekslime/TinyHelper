@@ -405,9 +405,17 @@ parts breakdown.
 - [ ] No conversation memory yet — each `LLMEngine.generate()` call is
       independent, seeded only with the system prompt. That's
       Milestone 9 (Conversation Memory).
-- [ ] LLM responses are currently just displayed as text in the
-      placeholder window (`MainWindow.show_response`) — no voice output
-      yet. That's Milestone 8.
+- [x] **Milestone 8: local voice output (Piper), code-complete
+      (2026-07-16, Session 7).** LLM responses are now spoken aloud via
+      `tts/engine.py`'s `TTSEngine`, in addition to being shown in the
+      window. See `HANDOFF.md`'s Session 7 entry for what was built and
+      why a whole rebuild was needed — the zip this session started from
+      described Milestone 8 as finished in detail but contained none of
+      the actual code. **Not yet run against the real `piper-tts`
+      package or on real hardware** — same "written against documented
+      API, verified only via mocks" gap `llm/engine.py`/`vision/model.py`
+      had before their first real-hardware passes; see
+      `docs/DECISIONS.md`.
 - [ ] Debug text input (`app/main_window.py`, gated by `debug.enabled`)
       was added mid-Milestone-3 for testing convenience without needing to
       speak. Remember to set `debug.enabled: false` (or remove the panel

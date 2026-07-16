@@ -1,13 +1,29 @@
 # HANDOFF.md
 
 **Last updated:** 2026-07-16
-**Milestones completed:** 1 through 6 ✅ — plus a targeted vision-gating
-fix, and Milestone 7 (Visual Guidance) is now code-complete: Parts B.1,
-B.2, B.3, and B.4 are all done. B.3 has its first real-hardware
-confirmation (Session 5, below); B.4 (early-dismiss triggers) is verified
-offscreen only, still needs a real-hardware pass. See `docs/ROADMAP.md`
-for full milestone history and `docs/TODO.md` for the part-by-part
-breakdown.
+**Milestones completed:** 1 through 6 ✅, Milestone 7 (Visual Guidance)
+code-complete (B.1-B.4), and Milestone 8 (Voice Responses) is now
+code-complete as of Session 7 below. B.3 has its first real-hardware
+confirmation (Session 5); B.4 and all of Milestone 8 are verified
+offscreen/mocked only, still need a real-hardware pass. See
+`docs/ROADMAP.md` for full milestone history and `docs/TODO.md` for the
+part-by-part breakdown.
+
+**Read this first if you're starting Milestone 9 (or anything else):**
+Session 7 (below) is the *third* time in a row this project's zip export
+didn't actually contain the previous session's finished work — this time
+it was a whole milestone (8), not just one part. The zip Session 7
+started from had detailed HANDOFF/DECISIONS-style commentary describing
+Milestone 8 as built, tested, and reasoned-about in depth, but not one
+line of the actual code existed on disk: no `tts/` package, no
+`app/tts_bridge.py`, no `AuraState.SPEAKING`, no `TTSSettings`, no `tts:`
+YAML block, no TTS wiring in `main.py`, no test file. Session 7 rebuilt
+all of it from scratch, using that stale narrative as a spec (it was
+detailed enough to be a very good one) and independently verifying every
+piece against the actual files this time — see below. **Before touching
+anything in a new session: diff what this file / `docs/TODO.md` claim is
+done against what's actually importable/present in the checkout.** If
+they disagree, say so plainly and treat the checkout as ground truth.
 
 ---
 
@@ -161,6 +177,49 @@ hardware — this is the user's desktop (RTX 3070 Ti, Ryzen 7 5700X), a
 different machine than Session 5's laptop, so it's also the first chance
 to confirm the CUDA/GPU-offload follow-ups from Session 5 on hardware
 that should actually support them well.
+
+**Session 7 (2026-07-16, same day) — Milestone 8: voice responses,
+rebuilt from scratch after the zip lost it (see the warning at the top
+of this file).** Full local TTS via Piper: `tts/engine.py`'s `TTSEngine`
+(local-path-or-download-CLI voice resolution, WAV synthesis, blocking
+playback via `sounddevice`, `stop()`), `app/tts_bridge.py` (worker
+thread -> Qt main thread, same shape as `llm_bridge.py`), a new
+`AuraState.SPEAKING` (cyan — `GlowAuraRenderer` needed zero changes,
+confirming Milestone 6/7's "renderer is generic over state" design held
+up), `TTSSettings` in `config/schema.py` + matching `tts:` block in
+`config/default_config.yaml` (9 fields, cross-checked to match exactly),
+a `tts` extra added to `pyproject.toml` (missing even as a stub — nothing
+to reinstate, since none of Milestone 8 had ever actually landed), and
+full `main.py` wiring (eager load with graceful degradation, speak after
+every LLM response, interrupt-on-new-query, SPEAKING/IDLE Aura
+transitions). `tests/test_tts_engine.py` written as real pytest (pytest
+itself still isn't installed in this sandbox, same as every prior
+session — additionally verified with a standalone mocked-`piper`/
+mocked-`sounddevice` script run directly, all 10 checks passing for
+real against the actual files, not just asserted). Full reasoning in
+`docs/DECISIONS.md`'s Milestone 8 entry (unchanged from what the stale
+zip described — the *design* was sound, only the implementation was
+missing) and `docs/TODO.md`.
+
+## Files modified (Session 7, Milestone 8)
+
+- `tts/__init__.py`, `tts/engine.py` — new package, `TTSEngine`.
+- `app/tts_bridge.py` — new, `TTSBridge`.
+- `aura/states.py` — `AuraState.SPEAKING` + its `DEFAULT_STATE_COLORS`
+  entry added.
+- `config/schema.py` — `TTSSettings` added, registered on `AppSettings`.
+- `config/default_config.yaml` — matching `tts:` block added.
+- `pyproject.toml` — `tts` extra (`piper-tts`, `sounddevice`) added to
+  `[project.optional-dependencies]`; `tts*` added to
+  `[tool.setuptools.packages.find]`'s `include` list (both were entirely
+  absent, not just stale).
+- `main.py` — TTS engine construction, `tts_bridge`, `_speak_worker`,
+  interrupt-on-new-query in `on_transcribed`, speak dispatch in
+  `on_llm_response`, `on_tts_finished`/`on_tts_failed` handlers, signal
+  connections, shutdown `tts_engine.stop()`.
+- `tests/test_tts_engine.py` — new, 10 real tests against mocked
+  `piper`/`sounddevice`.
+- `docs/ROADMAP.md`, `docs/TODO.md`, `HANDOFF.md` — this file.
 
 ## Files modified (2026-07-14 sessions)
 

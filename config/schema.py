@@ -301,6 +301,76 @@ class VisionSettings(BaseModel):
     )
 
 
+class TTSSettings(BaseModel):
+    """Local text-to-speech output (Piper, via `piper-tts`) settings
+    (Milestone 8).
+
+    `voice` names a Piper voice (e.g. "en_US-lessac-medium") to be
+    downloaded on first use and cached under `<app data dir>/models/tts`
+    -- same download-once-then-offline shape as `LLMSettings`/
+    `VisionSettings`. Set `local_model_path`/`local_config_path` together
+    to point at an already-downloaded `.onnx`/`.onnx.json` pair instead
+    and skip the download entirely. See `tts/engine.py`.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Master switch for voice output. Iris is voice-first by design "
+            "(see README.md), so this defaults on -- unlike vision.enabled, "
+            "there's no privacy reason to default it off. Still fully "
+            "optional: if the tts extra isn't installed, or the voice model "
+            "fails to load, Iris falls back to text-only responses (as it "
+            "already did before this milestone), same graceful-degradation "
+            "shape as llm_engine/vision_model above."
+        ),
+    )
+    voice: str = Field(
+        default="en_US-lessac-medium",
+        description="Piper voice name to download (if local_model_path is unset).",
+    )
+    local_model_path: str | None = Field(
+        default=None,
+        description="Path to a local .onnx voice file. Must be set together with local_config_path.",
+    )
+    local_config_path: str | None = Field(
+        default=None,
+        description="Path to a local .onnx.json voice config file. Must be set together with local_model_path.",
+    )
+    use_cuda: bool = Field(
+        default=False,
+        description=(
+            "Whether to run Piper's ONNX inference on GPU. Defaults off -- "
+            "Piper is fast enough on CPU that this hasn't been a bottleneck "
+            "the way vision inference is (see docs/DECISIONS.md), and CPU "
+            "keeps VRAM free for the LLM/vision models on tight-VRAM hardware."
+        ),
+    )
+    length_scale: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="Piper's speaking-rate control. >1.0 = slower, <1.0 = faster.",
+    )
+    noise_scale: float = Field(
+        default=0.667,
+        ge=0.0,
+        description="Piper's synthesis noise scale (voice variation/expressiveness).",
+    )
+    noise_w_scale: float = Field(
+        default=0.8,
+        ge=0.0,
+        description="Piper's synthesis noise-w scale (phoneme duration variation).",
+    )
+    interrupt_on_new_query: bool = Field(
+        default=True,
+        description=(
+            "Stop any in-progress speech immediately when a new query comes "
+            "in, mirroring vision.locate's early-dismiss-on-next-query "
+            "behavior for the target box (see main.py's on_transcribed)."
+        ),
+    )
+
+
 class DebugSettings(BaseModel):
     """Developer-only debug aids. None of this is part of Iris's intended
     end-user UX (which uses Aura + system tray, no visible windows or chat
@@ -333,4 +403,5 @@ class AppSettings(BaseModel):
     speech: SpeechSettings = Field(default_factory=SpeechSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
+    tts: TTSSettings = Field(default_factory=TTSSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)

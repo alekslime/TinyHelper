@@ -62,9 +62,13 @@ update it as milestones complete or priorities shift.
       `VisionModel.locate()`, wired into `main.py`'s query flow
 - [x] Early-dismiss on the next query or a ~4s cursor dwell (Part B.4)
 
-## Milestone 8 — Voice Responses (planned)
+## Milestone 8 — Voice Responses ✅ CODE-COMPLETE (pending real-hardware pass)
 
-- [ ] Local text-to-speech output
+- [x] Local text-to-speech output (Piper, via `piper-tts`) — see
+      `docs/DECISIONS.md` and `HANDOFF.md`'s Session 7 for the
+      "the previous zip didn't actually contain this" story. Not yet run
+      against the real `piper-tts` package or on real hardware — only
+      exercised via mocked `piper`/`sounddevice`.
 
 ## Milestone 9 — Conversation Memory (planned)
 

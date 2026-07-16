@@ -919,3 +919,104 @@ suite (outside the two pre-existing missing-package collection failures,
 **Not yet verified on real hardware** -- needs a real display and a real
 mouse to confirm the dwell feels right and that click-through still holds
 with the new polling timer running.
+
+## Milestone 8 — Voice Responses (Piper TTS), Session 7 (2026-07-16)
+
+**Context: this milestone had to be rebuilt from nothing.** The project
+zip this session started from included detailed narrative (in an
+attached transcript, not in any committed file) describing Milestone 8
+as fully built, unit-tested, and reasoned-about -- but the actual
+checkout contained zero trace of it: no `tts/` package, no
+`app/tts_bridge.py`, no `AuraState.SPEAKING`, no `TTSSettings`, no `tts:`
+config block, no TTS wiring in `main.py`, no test file. This is the same
+failure mode `HANDOFF.md` already warned about after Sessions 3/4 (a
+zip export losing a prior session's finished work) -- this time for an
+entire milestone rather than one part. The design described in that
+narrative was sound, so Session 7 used it as a specification and
+rebuilt every piece from scratch, verifying each one against the actual
+files on disk rather than trusting the narrative -- see `HANDOFF.md`'s
+Session 7 entry for the file list.
+
+**Piper (`piper-tts`), CPU-only by default, not an OS TTS API.** Chosen
+for the same "fully local, no cloud dependency" reason as the LLM/vision
+stack -- Piper runs entirely on-device, has no meaningful GPU/CPU cost,
+and keeps Iris's "runs real local models" character consistent across
+the whole pipeline rather than falling back to an OS API for the one
+piece the user actually *hears*. Piper's published real-time factors are
+comfortably fast on CPU even for small voices (well under 1x on typical
+desktop/laptop CPUs), so unlike vision inference (Session 5's
+real-hardware finding: ~4 minutes per `locate()` call on the Quadro
+M3000M laptop), this shouldn't reproduce that latency problem -- **but
+this is an expectation from Piper's own published numbers, not
+something confirmed on real hardware yet**, see "Not yet verified"
+below. `use_cuda` defaults to `false` deliberately: Piper's CPU speed is
+expected to make GPU offload unnecessary, and leaving TTS on the CPU
+keeps VRAM free for the LLM/vision models on tight-VRAM hardware.
+
+**Voice download goes through Piper's `download_voices` CLI, not
+`piper.download`'s internal functions.** `piper-tts` isn't installable
+in this sandbox at all (no network). Rather than guess at internal
+function names/signatures that are more likely to drift across
+releases, `TTSEngine._ensure_voice_downloaded()` shells out to
+`python -m piper.download_voices <voice> --data-dir <dir>`, the
+documented CLI entry point, and then loads the `.onnx`/`.onnx.json`
+files it expects to find afterward -- raising a clear, specific
+`RuntimeError` if they aren't there rather than silently proceeding
+(see `tests/test_tts_engine.py::test_download_cli_success_but_missing_files_raises_clear_runtime_error`).
+This is the same "fail loudly and specifically rather than silently
+produce wrong output" instinct as `vision/model.py`'s docstring warning
+about the moondream2/MiniCPM-V mismatch. **Local
+`local_model_path`/`local_config_path` overrides remain the recommended
+path for anyone who hits a real mismatch here** -- the same escape
+hatch `LLMSettings`/`VisionSettings` already offer.
+
+**New `AuraState.SPEAKING`, not reusing `THINKING`.** Speaking is a
+distinct, user-visible phase from generating a response -- reusing
+THINKING's purple would misleadingly imply Iris is still "thinking"
+while it's actually talking. Picked cyan (RGB 0, 188, 212) to sit
+visually between LISTENING's green and IDLE's blue, distinct from all
+other states. `GlowAuraRenderer` needed zero code changes for this --
+`set_state()` already looks up colors generically via
+`DEFAULT_STATE_COLORS.get(state, ...)` (confirmed by grep against
+`aura/renderer/glow_renderer.py`, `base.py`, `null_renderer.py` before
+writing any code), confirming Milestone 6/7's "renderer doesn't know
+about specific states" design held up exactly as intended for a
+genuinely new state.
+
+**A failed `speak()` degrades to IDLE, not ERROR.** By the time
+`on_llm_response` starts speaking, the text response has already reached
+the user via `window.show_response()` -- the query itself succeeded. A
+playback failure (e.g. no output device) is a lesser, separate problem
+from a generation failure, so `on_tts_failed` logs and returns to IDLE
+rather than driving `AuraState.ERROR`. Mirrors the reasoning already
+applied to OCR/caption failures in vision's
+`_build_prompt_with_screen_context` (each sub-failure degrades
+independently rather than failing the whole turn).
+
+**Verification, this time actually run against the real files.** Both
+`piper-tts` and a working `sounddevice` (PortAudio) are unavailable in
+this sandbox, so `tests/test_tts_engine.py` installs fake `piper`/
+`sounddevice` modules into `sys.modules`, same technique
+`test_llm_engine.py` uses for `llama_cpp`. `pytest` itself still isn't
+installed here (no network, same as every prior session), so the
+suite's logic was additionally run as a standalone script directly
+against `tts/engine.py` -- 10/10 checks passed for real this session
+(local-path bypass, mismatched-args error, download-CLI success/failure/
+already-cached paths, `speak()` synthesize+play, empty-text no-op,
+`stop()` idle-vs-active, `_speaking` reset on exception, valid WAV
+output). The `config/schema.py` <-> `config/default_config.yaml` field
+match (9 `tts.*` keys) was cross-checked with a script, not eyeballed.
+
+**Not yet verified on real hardware, or even against the real package at
+all.** Two separate gaps:
+1. `piper-tts` isn't installed anywhere this session had access to (no
+   network in this sandbox). Everything in `tts/engine.py` is written
+   against Piper's documented public API as best understood, exercised
+   only via mocks.
+2. No real audio has been heard. Once `piper-tts`/`sounddevice` are
+   properly installed on real hardware, this needs a real run to
+   confirm: voice quality, whether `length_scale` 1.0's default pace
+   sounds right, whether the `download_voices` CLI invocation matches
+   this code's assumptions about its output layout, and real CPU
+   latency (does speech start promptly after a response, or is there an
+   awkward pause).

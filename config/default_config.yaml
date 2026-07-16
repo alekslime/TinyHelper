@@ -70,5 +70,16 @@ vision:
   ocr_min_confidence: 60.0  # minimum per-word Tesseract confidence (0-100) to include a word in OCR output
   tesseract_cmd: null  # full path to the tesseract executable, if it isn't on PATH
 
+tts:
+  enabled: true  # voice-first by design -- off automatically if the tts extra isn't installed or the voice fails to load
+  voice: en_US-lessac-medium  # downloaded + cached under <app data dir>/models/tts on first use
+  local_model_path: null  # set together with local_config_path to bypass the download and load a local .onnx voice
+  local_config_path: null  # required alongside local_model_path
+  use_cuda: false
+  length_scale: 1.0  # >1.0 = slower speech, <1.0 = faster
+  noise_scale: 0.667
+  noise_w_scale: 0.8
+  interrupt_on_new_query: true  # stop in-progress speech as soon as the next query comes in
+
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

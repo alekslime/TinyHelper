@@ -25,6 +25,7 @@ class AuraState(Enum):
     THINKING = "thinking"
     WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
     ERROR = "error"
+    SPEAKING = "speaking"
 
 
 # Default color mapping per the Aura design language (see docs/ARCHITECTURE.md).
@@ -35,4 +36,5 @@ DEFAULT_STATE_COLORS: dict[AuraState, RGB] = {
     AuraState.THINKING: RGB(155, 89, 182),                # Purple
     AuraState.WAITING_FOR_CONFIRMATION: RGB(241, 196, 15),  # Yellow
     AuraState.ERROR: RGB(231, 76, 60),                    # Red
+    AuraState.SPEAKING: RGB(0, 188, 212),                 # Cyan
 }
