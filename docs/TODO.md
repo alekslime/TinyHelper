@@ -402,20 +402,33 @@ parts breakdown.
       Swapping models is a one-line `config.yaml` change
       (`llm.repo_id`/`llm.filename`, or `llm.local_model_path` for a local
       file) — no code changes needed.
-- [ ] No conversation memory yet — each `LLMEngine.generate()` call is
-      independent, seeded only with the system prompt. That's
-      Milestone 9 (Conversation Memory).
-- [x] **Milestone 8: local voice output (Piper), code-complete
-      (2026-07-16, Session 7).** LLM responses are now spoken aloud via
-      `tts/engine.py`'s `TTSEngine`, in addition to being shown in the
-      window. See `HANDOFF.md`'s Session 7 entry for what was built and
-      why a whole rebuild was needed — the zip this session started from
-      described Milestone 8 as finished in detail but contained none of
-      the actual code. **Not yet run against the real `piper-tts`
-      package or on real hardware** — same "written against documented
-      API, verified only via mocks" gap `llm/engine.py`/`vision/model.py`
-      had before their first real-hardware passes; see
+- [x] No conversation memory yet — each `LLMEngine.generate()` call is
+      independent, seeded only with the system prompt.
+      **Milestone 9, Part A (2026-07-16, Session 9): fixed —
+      query/response turns are now persisted** to a local SQLite database
+      via `memory/store.py`'s `ConversationStore`, wired into `main.py`'s
+      `_generate_worker` right after a successful response. Confirmed on
+      real hardware (Windows, RTX 3070 Ti): `conversations.db` created
+      under `%APPDATA%\Iris\data\`, 3 real turns saved and read back
+      correctly. **This is storage only** — nothing yet feeds past turns
+      back into the LLM prompt; that's Part B (retrieval for follow-up
+      context), not started, deliberately out of scope for this session.
+      9 new real tests in `tests/test_memory_store.py`, run for real
+      against actual `sqlite3` (stdlib, nothing to mock) — found and
+      fixed one real bug along the way (`ConversationStore.__init__`'s
+      `mkdir` raised an uncaught `FileExistsError` instead of the
+      intended `RuntimeError` when the parent path collided with an
+      existing file). See `HANDOFF.md`'s Session 9 entry and
       `docs/DECISIONS.md`.
+- [x] **Milestone 8: local voice output (Piper) — confirmed on real
+      hardware (2026-07-16, Session 8).** LLM responses are now spoken
+      aloud via `tts/engine.py`'s `TTSEngine`, in addition to being shown
+      in the window. See `HANDOFF.md`'s Session 7 entry for what was
+      built and why a whole rebuild was needed, and Session 8 for the
+      real-hardware bug found and fixed
+      (`synthesize_wav()`'s call shape). Confirmed end-to-end: LLM,
+      vision, OCR, wake word, Whisper, and TTS all load and run
+      correctly, real audio plays.
 - [ ] Debug text input (`app/main_window.py`, gated by `debug.enabled`)
       was added mid-Milestone-3 for testing convenience without needing to
       speak. Remember to set `debug.enabled: false` (or remove the panel

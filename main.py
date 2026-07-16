@@ -460,10 +460,32 @@ def main() -> int:
                 # here except stop before spending an LLM call on a query
                 # we've already decided not to answer normally.
                 return
+
+            # Milestone 9, Part B: fetch recent turns for follow-up
+            # context. Deliberately uses the *raw* transcribed text (via
+            # get_recent_turns, which reads back exactly what save_turn
+            # stored), not the vision-augmented `prompt` above — history
+            # entries already happened and were already answered; only
+            # this turn's prompt needs the fresh screen context. Reversed
+            # to oldest-first, since ConversationStore.get_recent_turns
+            # returns newest-first but chat messages need chronological
+            # order. No token-budget accounting against llm.n_ctx here —
+            # see MemorySettings.context_turns' docstring and
+            # docs/DECISIONS.md.
+            history: list[tuple[str, str]] = []
+            if conversation_store is not None and settings.memory.context_turns > 0:
+                try:
+                    recent = conversation_store.get_recent_turns(limit=settings.memory.context_turns)
+                    history = [(turn["query"], turn["response"]) for turn in reversed(recent)]
+                except Exception:
+                    logger.exception("Failed to fetch conversation history — continuing without it.")
+                    history = []
+
             response = llm_engine.generate(
                 prompt,
                 max_tokens=settings.llm.max_tokens,
                 temperature=settings.llm.temperature,
+                history=history,
             )
             if response:
                 # Milestone 9, Part A: persist the turn as it happens.

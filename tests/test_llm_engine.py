@@ -103,3 +103,77 @@ def test_local_model_path_bypasses_retry_logic_entirely(monkeypatch) -> None:
         llama_ctor.assert_called_once()
 
     from_pretrained_mock.assert_not_called()
+
+
+def _build_engine_with_fake_model(monkeypatch, engine_module):
+    """Construct an LLMEngine via local_model_path (bypasses the download
+    path entirely) with a MagicMock in place of the real Llama model, so
+    generate()'s message-assembly logic can be inspected directly.
+    """
+    with patch.object(engine_module, "Llama") as llama_ctor:
+        fake_model = MagicMock(name="fake-model")
+        llama_ctor.return_value = fake_model
+        llm = engine_module.LLMEngine(local_model_path="/some/local/model.gguf")
+    return llm, fake_model
+
+
+def test_generate_with_no_history_sends_only_system_and_user_messages(monkeypatch) -> None:
+    engine_module = _import_engine()
+    llm, fake_model = _build_engine_with_fake_model(monkeypatch, engine_module)
+    fake_model.create_chat_completion.return_value = {
+        "choices": [{"message": {"content": "a reply"}}]
+    }
+
+    result = llm.generate("hello")
+
+    assert result == "a reply"
+    sent_messages = fake_model.create_chat_completion.call_args.kwargs["messages"]
+    assert sent_messages == [
+        {"role": "system", "content": llm._system_prompt},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+def test_generate_with_history_inserts_alternating_messages_in_order(monkeypatch) -> None:
+    engine_module = _import_engine()
+    llm, fake_model = _build_engine_with_fake_model(monkeypatch, engine_module)
+    fake_model.create_chat_completion.return_value = {
+        "choices": [{"message": {"content": "final reply"}}]
+    }
+
+    history = [("what's your name", "I'm Iris"), ("nice to meet you", "likewise!")]
+    result = llm.generate("what did I just say", history=history)
+
+    assert result == "final reply"
+    sent_messages = fake_model.create_chat_completion.call_args.kwargs["messages"]
+    assert sent_messages == [
+        {"role": "system", "content": llm._system_prompt},
+        {"role": "user", "content": "what's your name"},
+        {"role": "assistant", "content": "I'm Iris"},
+        {"role": "user", "content": "nice to meet you"},
+        {"role": "assistant", "content": "likewise!"},
+        {"role": "user", "content": "what did I just say"},
+    ]
+
+
+def test_generate_empty_text_returns_empty_without_calling_model(monkeypatch) -> None:
+    engine_module = _import_engine()
+    llm, fake_model = _build_engine_with_fake_model(monkeypatch, engine_module)
+
+    result = llm.generate("   ", history=[("q", "r")])
+
+    assert result == ""
+    fake_model.create_chat_completion.assert_not_called()
+
+
+def test_generate_none_history_behaves_like_empty_list(monkeypatch) -> None:
+    engine_module = _import_engine()
+    llm, fake_model = _build_engine_with_fake_model(monkeypatch, engine_module)
+    fake_model.create_chat_completion.return_value = {
+        "choices": [{"message": {"content": "reply"}}]
+    }
+
+    llm.generate("hello", history=None)
+
+    sent_messages = fake_model.create_chat_completion.call_args.kwargs["messages"]
+    assert len(sent_messages) == 2  # system + user only, no history entries

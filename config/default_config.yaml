@@ -84,6 +84,7 @@ tts:
 memory:
   enabled: true
   db_path: null  # defaults to <app data dir>/data/conversations.db
+  context_turns: 5  # 0 = don't feed history back into the prompt (Part B)
 
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

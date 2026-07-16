@@ -1,13 +1,14 @@
 # HANDOFF.md
 
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-16 (Session 9)
 **Milestones completed:** 1 through 6 ✅, Milestone 7 (Visual Guidance)
-code-complete (B.1-B.4), and Milestone 8 (Voice Responses) is now
-code-complete as of Session 7 below. B.3 has its first real-hardware
-confirmation (Session 5); B.4 and all of Milestone 8 are verified
-offscreen/mocked only, still need a real-hardware pass. See
-`docs/ROADMAP.md` for full milestone history and `docs/TODO.md` for the
-part-by-part breakdown.
+code-complete (B.1-B.4), Milestone 8 (Voice Responses) confirmed on real
+hardware (Session 8), and Milestone 9 Part A (SQLite-backed conversation
+history) is done and confirmed on real hardware as of Session 9 below.
+Milestone 9 Part B (retrieval for follow-up context) has not been
+started. B.3/B.4 (Milestone 7) still only have partial or no
+real-hardware confirmation — see `docs/ROADMAP.md` for full milestone
+history and `docs/TODO.md` for the part-by-part breakdown.
 
 **Read this first if you're starting Milestone 9 (or anything else):**
 Session 7 (below) is the *third* time in a row this project's zip export
@@ -217,6 +218,52 @@ account. Synthesis is now confirmed correct only against mocks again
 (no network for a second real-hardware round-trip this session) — still
 needs one more real run to confirm actual audio output.
 
+**Session 9 (2026-07-16, same day) — Milestone 9, Part A: SQLite-backed
+conversation history.** Scoped explicitly to storage only — Part B
+(retrieval for follow-up context) was not started this session. New
+`memory/store.py` (`ConversationStore`: `save_turn()`,
+`get_recent_turns()`, `count_turns()`), `MemorySettings` in
+`config/schema.py` (`enabled`, `db_path`) + matching `memory:` block in
+`config/default_config.yaml`, wired into `main.py`'s `_generate_worker`
+— a turn is saved right after a successful LLM response, before it's
+reported back via `llm_bridge`. No optional-extra dependency
+(`sqlite3` is stdlib), so no `_MEMORY_AVAILABLE`-style defensive import
+like `llm`/`vision`/`tts` have; the only realistic failure is a bad
+`db_path`, which raises a clear `RuntimeError` that `main.py` catches
+the same way it catches the other engines' construction failures.
+`tests/test_memory_store.py` — 9 tests, run for real against actual
+`sqlite3` (nothing to mock, unlike `tts`/`llm`/`vision`) — caught and
+fixed one real bug (`ConversationStore.__init__`'s `mkdir` call raised
+an uncaught `FileExistsError` instead of the intended `RuntimeError`
+when its parent path collided with an existing file; fixed by moving
+`mkdir` inside the same `try`/`except` as the DB connect). This
+session's sandbox could also install `pytest` for the first time (prior
+sessions couldn't — no network), so these ran as real `pytest`, not a
+standalone mocked script. **Confirmed on real hardware the same
+session** (Windows, RTX 3070 Ti): the user ran three real queries,
+`%APPDATA%\Iris\data\conversations.db` was created, and
+`ConversationStore.get_recent_turns()` read back all 3 turns with
+correct content and correct newest-first order. `main.py`'s wiring
+itself was only verified by `py_compile` + code review in this sandbox
+(`PySide6` isn't installed here) before the user's real-hardware run
+confirmed it actually works end-to-end. Full reasoning in
+`docs/DECISIONS.md`'s Milestone 9 Part A entry.
+
+## Files modified (Session 9, Milestone 9 Part A)
+
+- `memory/store.py` — new, `ConversationStore` (`save_turn`,
+  `get_recent_turns`, `count_turns`).
+- `config/schema.py` — `MemorySettings` added, registered on
+  `AppSettings`.
+- `config/default_config.yaml` — matching `memory:` block added.
+- `main.py` — `ConversationStore` construction (graceful-degradation
+  pattern), `save_turn()` call in `_generate_worker` after a successful
+  response, module docstring's numbered list updated.
+- `tests/test_memory_store.py` — new, 9 real tests against actual
+  `sqlite3`.
+- `docs/ROADMAP.md`, `docs/TODO.md`, `docs/DECISIONS.md`, `HANDOFF.md`
+  — this file.
+
 ## Files modified (Session 7, Milestone 8)
 
 - `tts/__init__.py`, `tts/engine.py` — new package, `TTSEngine`.
@@ -356,40 +403,37 @@ needs one more real run to confirm actual audio output.
 ## Current project status
 
 Milestones 1–6 are code-complete and verified on real hardware. Milestone
-7 (Visual Guidance) is now code-complete: Parts B.1 (vision model
-structured output), B.2 (a flashed rectangle target box,
-`_TargetBoxWidget`), B.3 (wiring `main.py`'s query flow to
-`VisionModel.locate()` and `AuraController.show_target_box()`), and B.4
-(early-dismiss triggers — next query, ~4s cursor dwell) are all
-code-complete and verified offscreen in this sandbox. B.3 has additionally
-been confirmed once on real hardware (Windows laptop, Quadro M3000M) —
-locate → target-box → response worked correctly end-to-end with real
-model weights, though real-hardware vision inference is currently slow
-(CPU-only) and that laptop's live config still needs syncing to the
-keyword-gating design (see "Known issues" and `docs/TODO.md`'s "Loose
-ends"). B.4 has not yet been run on real hardware at all.
+7 (Visual Guidance) is code-complete: Parts B.1-B.4 are all done and
+verified offscreen; B.3 has been confirmed once on real hardware
+(Windows laptop, Quadro M3000M) — locate → target-box → response worked
+correctly end-to-end, though that laptop's live config still needs
+syncing to the keyword-gating design (see `docs/TODO.md`'s "Loose
+ends"). B.4 has still not been run on real hardware at all. Milestone 8
+(Voice Responses) is confirmed on real hardware (Session 8, Windows RTX
+3070 Ti) — LLM, vision, OCR, wake word, Whisper, and TTS all load and
+run correctly, real audio plays. Milestone 9 Part A (SQLite-backed
+conversation history) is done and confirmed on real hardware as of
+Session 9 — turns are being persisted correctly. Part B (retrieval for
+follow-up context) has not been started.
 
 ## Next milestone
 
-Milestone 7's current scope is done. Two things are worth doing before
-picking up Milestone 8 (Voice Responses):
+Milestone 9 Part A is done. Two things are open, either is a reasonable
+next session:
 
-1. **Real-hardware pass on Part B.4** — confirm the cursor-dwell dismiss
-   feels right (is 4s too long/short?) and that click-through still holds
-   with the new polling timer running, on a real display and a real
-   mouse.
-2. **The Session 5 performance follow-ups**, still open and now testable
-   on different, stronger hardware (RTX 3070 Ti, Ryzen 7 5700X, per the
-   user) than the laptop that surfaced them: a CUDA-enabled
-   `llama-cpp-python` reinstall for real GPU offload, and syncing
-   `vision.trigger_keywords`/`locate_trigger_keywords` in this machine's
-   own `config.yaml` so `locate()` and `describe()` don't both run on a
-   single "where's X" query. See `docs/TODO.md`'s "Loose ends" section
-   for the full detail.
-
-Once those are confirmed (or at least attempted) on real hardware,
-Milestone 8 — Voice Responses (local TTS output) is next per
-`docs/ROADMAP.md`.
+1. **Milestone 9, Part B — retrieval for follow-up context.** Feed
+   recent turns from `ConversationStore.get_recent_turns()` back into
+   the LLM prompt so follow-up questions have context (e.g. "what did I
+   just ask you"). This is the harder half of Milestone 9 — needs a
+   design decision on how many turns / how much text to include without
+   blowing the context window, and how that interacts with
+   `_build_prompt_with_screen_context`'s existing prompt-assembly logic.
+2. **Leftover real-hardware gaps from Milestone 7**, still open: a
+   real-hardware pass on Part B.4 (does the ~4s cursor-dwell dismiss feel
+   right?), and the Session 5 performance follow-ups (CUDA-enabled
+   `llama-cpp-python`, syncing `vision.trigger_keywords`/
+   `locate_trigger_keywords` in the live config) — see `docs/TODO.md`'s
+   "Loose ends" section for full detail.
 
 ## Ready-to-copy prompt for the next session
 
@@ -401,58 +445,41 @@ Before writing any code:
 2. Read every file inside /docs
 3. Understand the current project state
 
-Milestones 1-6 are done and verified on real hardware. Milestone 7
-(Visual Guidance) is in progress: Part B.1 (vision model structured
-output, VisionModel.locate()), Part B.2 (a flashed rectangle outline via
-_TargetBoxWidget, auto-hides after TARGET_BOX_DURATION_MS, now 8s), and
-Part B.3 (wiring main.py's query flow to VisionModel.locate() and
-AuraController.show_target_box(), via app/vision_locate_bridge.py and
-VisionSettings.locate_trigger_keywords gating) are all code-complete and
-verified for real in this sandbox. B.3 has also been confirmed once on
-real hardware (Windows laptop, Quadro M3000M, 4GB VRAM) -- locate ->
-target-box -> response worked correctly end-to-end, though real-hardware
-vision inference is currently slow (CPU-only, no CUDA wheels) and the
-test laptop's live config still needs syncing to the trigger-keyword
-split. See HANDOFF.md's Session 5 notes and docs/TODO.md's "Loose ends"
-section for full detail.
+Milestones 1-8 are done and confirmed on real hardware. Milestone 9,
+Part A (SQLite-backed conversation history, memory/store.py's
+ConversationStore) is done and confirmed on real hardware as of Session
+9 -- query/response turns are persisted to a local SQLite database as
+they happen. This is storage only: nothing yet feeds past turns back
+into the LLM prompt.
 
-Start with Part B.4 -- Early-dismiss triggers, as scoped in
-docs/TODO.md's Milestone 7 section:
-  1. clear_target_box() should fire when the next query comes in (i.e.
-     a new on_transcribed/debug-text-submitted call arrives while a box
-     is still showing), not just after TARGET_BOX_DURATION_MS elapses.
-  2. clear_target_box() should also fire after the cursor dwells inside
-     the box for ~4 seconds (matches the existing breathing-pulse
-     period) -- needs a QTimer polling QCursor.pos() against the box
-     rect, or a Qt event filter; your call on the approach, but explain
-     the tradeoff you picked in docs/DECISIONS.md.
-  3. Confirm end-to-end as best this sandbox allows (offscreen Qt, same
-     approach as B.2/B.3), then flag plainly what still needs a
-     real-hardware pass.
+Start with Milestone 9, Part B -- retrieval for follow-up context:
+  1. Design how many recent turns (or how much text) get pulled from
+     ConversationStore.get_recent_turns() and fed into the LLM prompt,
+     without blowing LLMSettings.n_ctx. Explain the tradeoff you picked
+     in docs/DECISIONS.md.
+  2. Wire it into main.py's _build_prompt_with_screen_context (or a new
+     helper alongside it) so follow-up questions ("what did I just ask
+     you") actually have context.
+  3. Add a config setting for how much history to include (matching the
+     MemorySettings pattern already in config/schema.py).
+  4. Confirm end-to-end as best this sandbox allows -- memory/store.py
+     itself can be tested for real (sqlite3 is stdlib), but main.py's
+     full wiring can only be verified by compilation/code review here
+     since PySide6 isn't installed in this sandbox. Say so plainly.
 
-Optional, only if time allows and it doesn't distract from B.4 -- two
-follow-ups from the Session 5 real-hardware run, neither started:
-  - The not-found path (Part B.3) still hasn't been exercised against
-    real vision-model output on real hardware, only the found path has.
-  - A dedicated on_locate_failed handler (see HANDOFF.md "Known issues")
-    for cleaner not-found-message framing than reusing on_llm_failed's
-    "(LLM error -- see logs: ...)" wrapping.
-
-IMPORTANT -- read this before touching anything: the last two sessions
-in a row started from a project zip that didn't contain the prior
-session's own finished work (Session 3 was missing Session 2's
-morphing-glow code entirely; Session 4 was missing Session 3's finished
-B.3 wiring entirely). Before writing any code this session: diff what
-HANDOFF.md/docs/TODO.md claim is done against what's actually in the
-files on disk (main.py, app/, aura/renderer/glow_renderer.py,
-config/schema.py). If Part B.3's wiring isn't actually present, say so
-plainly and redo it before starting B.4 -- don't build early-dismiss
-triggers on top of wiring that doesn't exist in this checkout. If it IS
-present, proceed straight to B.4.
+IMPORTANT -- read this before touching anything: this project's zip
+exports have repeatedly NOT contained the previous session's finished
+work (documented in earlier entries in this file). Before writing any
+code this session: diff what HANDOFF.md/docs/TODO.md claim is done
+against what's actually importable/present in the checkout (main.py,
+memory/store.py, config/schema.py's MemorySettings). If Part A's wiring
+isn't actually present, say so plainly and rebuild it before starting
+Part B -- don't build retrieval on top of storage that doesn't exist in
+this checkout.
 
 Work incrementally, in small parts (not all at once -- confirm progress
 with me between parts). Do not begin implementing anything beyond
-Milestone 7's scope. Do not write fake/mock-only "it imports" tests --
+Milestone 9's scope. Do not write fake/mock-only "it imports" tests --
 verify things for real wherever this sandbox allows, and say plainly
 when something genuinely can't be (e.g. real model weights, a real
 display, real hardware). End the session by updating HANDOFF.md and

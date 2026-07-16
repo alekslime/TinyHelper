@@ -46,10 +46,13 @@ DOWNLOAD_RETRY_BACKOFF_S = 2.0
 
 
 class LLMEngine:
-    """Wraps a llama.cpp `Llama` instance for one-shot chat completion.
+    """Wraps a llama.cpp `Llama` instance for chat completion.
 
-    Stateless across calls — no conversation history yet (that's Milestone
-    9's job). Each `generate()` call is a fresh system+user turn.
+    Stateless by itself — this class holds no conversation history
+    between calls. `generate()` accepts an optional `history` argument
+    (Milestone 9, Part B) so a caller *can* pass prior turns in, but
+    fetching/storing that history is entirely `main.py`'s /
+    `memory.store.ConversationStore`'s job, not this class's.
     """
 
     def __init__(
@@ -135,8 +138,19 @@ class LLMEngine:
         user_text: str,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
+        history: list[tuple[str, str]] | None = None,
     ) -> str:
         """Generate a reply to a single user utterance.
+
+        `history`, if given, is a list of `(query, response)` pairs from
+        prior turns, oldest first, inserted as alternating user/assistant
+        messages between the system prompt and this turn's `user_text`
+        (Milestone 9, Part B). `main.py` is responsible for deciding how
+        many turns to pass and fetching them from
+        `memory.store.ConversationStore` — this method just assembles
+        whatever it's given into the chat-completion `messages` list. No
+        history (the default, `None`/empty) is exactly the old
+        single-turn behavior.
 
         Returns an empty string for empty input; raises on inference
         failure (the caller decides how to handle that — see
@@ -145,10 +159,12 @@ class LLMEngine:
         if not user_text.strip():
             return ""
 
-        messages = [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": user_text},
-        ]
+        messages: list[dict[str, str]] = [{"role": "system", "content": self._system_prompt}]
+        for past_query, past_response in history or []:
+            messages.append({"role": "user", "content": past_query})
+            messages.append({"role": "assistant", "content": past_response})
+        messages.append({"role": "user", "content": user_text})
+
         result = self._model.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
@@ -156,5 +172,10 @@ class LLMEngine:
         )
         text = result["choices"][0]["message"]["content"].strip()
 
-        logger.debug("LLM generated %d chars for input %r", len(text), user_text)
+        logger.debug(
+            "LLM generated %d chars for input %r (%d history turns)",
+            len(text),
+            user_text,
+            len(history or []),
+        )
         return text

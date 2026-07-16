@@ -62,18 +62,27 @@ update it as milestones complete or priorities shift.
       `VisionModel.locate()`, wired into `main.py`'s query flow
 - [x] Early-dismiss on the next query or a ~4s cursor dwell (Part B.4)
 
-## Milestone 8 — Voice Responses ✅ CODE-COMPLETE (pending real-hardware pass)
+## Milestone 8 — Voice Responses ✅ COMPLETE (confirmed on real hardware)
 
 - [x] Local text-to-speech output (Piper, via `piper-tts`) — see
       `docs/DECISIONS.md` and `HANDOFF.md`'s Session 7 for the
-      "the previous zip didn't actually contain this" story. Not yet run
-      against the real `piper-tts` package or on real hardware — only
-      exercised via mocked `piper`/`sounddevice`.
+      "the previous zip didn't actually contain this" story, and
+      Session 8 for the real-hardware bug (`synthesize_wav()`'s call
+      shape) found and fixed. Confirmed end-to-end on real hardware
+      (Windows, RTX 3070 Ti): LLM, vision, OCR, wake word, Whisper, and
+      TTS all load and run correctly, real audio plays.
 
-## Milestone 9 — Conversation Memory (planned)
+## Milestone 9 — Conversation Memory (in progress)
 
-- [ ] SQLite-backed conversation history
-- [ ] Retrieval for follow-up context
+- [x] **Part A: SQLite-backed conversation history** — each
+      query/response turn persisted to a local SQLite database as it
+      happens. See `memory/store.py`'s `ConversationStore`,
+      `MemorySettings` in `config/schema.py`, and `HANDOFF.md`'s
+      Session 9 entry. Confirmed on real hardware (Windows, RTX 3070 Ti):
+      `%APPDATA%\Iris\data\conversations.db` created, 3 real turns
+      persisted and read back correctly, in order.
+- [ ] Part B: retrieval for follow-up context (not started — separate
+      session, deliberately out of scope for Part A)
 
 ## Milestone 10 — Settings UI (planned)
 

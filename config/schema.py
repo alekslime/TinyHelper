@@ -391,6 +391,21 @@ class MemorySettings(BaseModel):
             "<app data dir>/data/conversations.db (see config/paths.py's DATA_DIR)."
         ),
     )
+    context_turns: int = Field(
+        default=5,
+        ge=0,
+        description=(
+            "Milestone 9, Part B: number of most-recent past turns "
+            "(query/response pairs) fetched from ConversationStore and "
+            "fed back into the LLM prompt as chat history, so follow-up "
+            "questions have context. 0 disables retrieval entirely -- "
+            "turns are still persisted (see `enabled` above) but never "
+            "read back into a prompt. No token-budget accounting against "
+            "llm.n_ctx yet -- a large context_turns value on a small "
+            "n_ctx could crowd out the actual response; see "
+            "docs/DECISIONS.md."
+        ),
+    )
 
 
 class DebugSettings(BaseModel):

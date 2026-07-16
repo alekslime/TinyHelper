@@ -1033,3 +1033,75 @@ call shape is confirmed only against mocks again (no network for a
 second real-hardware round-trip this session) -- **still needs one more
 real run to confirm it actually speaks audio out loud**, and to check
 voice quality/pace/latency, none of which have been heard yet.
+
+## Milestone 9, Part A — SQLite-backed conversation history (2026-07-16, Session 9)
+
+**Scope: storage only.** The user explicitly scoped this session to
+persisting turns, not retrieval -- Part B (feeding past turns back into
+the LLM prompt for follow-up context) is separate, harder, and
+deliberately untouched here. `ConversationStore.get_recent_turns()`
+exists for inspection/testing only; nothing in `main.py`'s prompt
+construction reads from it.
+
+**One connection per call, not one shared connection.** `main.py` runs
+LLM generation on a new `threading.Thread` per query (`_generate_worker`),
+so a single long-lived `sqlite3.Connection` constructed on the main
+thread would need `check_same_thread=False` plus a lock to be used safely
+from those worker threads. Chose the simpler alternative instead:
+`ConversationStore.save_turn`/`get_recent_turns` each open a short-lived
+connection for the duration of one call. SQLite's own file locking
+handles concurrent access correctly, and turn volume (one write per
+query) is nowhere near where per-call connection overhead would matter.
+Verified for real: `test_reopening_same_db_path_preserves_existing_rows`
+constructs two separate `ConversationStore` instances against the same
+file (simulating two worker threads) and confirms both see all rows.
+
+**Where the turn gets saved.** `_generate_worker` (in `main.py`) calls
+`conversation_store.save_turn(text, response)` immediately after a
+successful `llm_engine.generate()` call, before `llm_bridge.report_response()`.
+Only successful turns are saved -- a failed/empty generation has no
+response worth recording, and `on_llm_failed` (the failure path) doesn't
+call `save_turn` at all. A `try`/`except Exception` around the save
+means a DB write failure degrades to a logged warning, not a lost
+response to the user -- the same graceful-degradation shape used
+everywhere else in `main.py` (a broken TTS/vision/memory component never
+takes down the parts that still work).
+
+**No optional-extra dependency.** Unlike `llm`/`vision`/`tts`,
+`memory.py`'s only dependency is `sqlite3`, which is in the Python
+standard library. `MemorySettings.enabled` still exists as a config
+toggle (mirrors `tts.enabled`/`vision.enabled`), but there's no
+`_MEMORY_AVAILABLE`-style defensive import in `main.py` -- the only
+realistic failure mode is a bad/unwritable `db_path`, which
+`ConversationStore.__init__` turns into a clear `RuntimeError`,
+caught in `main.py` the same way `TTSEngine`'s/`VisionModel`'s
+constructor failures are.
+
+**Real bug found via the test suite, not by inspection.**
+`ConversationStore.__init__` originally called
+`self.db_path.parent.mkdir(parents=True, exist_ok=True)` outside the
+`try`/`except sqlite3.Error` block that wrapped the actual DB connect.
+`test_unwritable_db_path_raises_runtime_error` (parent path is an
+existing *file*, not a directory) caught this immediately: `mkdir` raised
+a raw `FileExistsError`, not the intended `RuntimeError` -- `exist_ok=True`
+only suppresses the error when the existing thing at that path actually
+is a directory, not when it's a file blocking directory creation. Fixed
+by moving `mkdir` inside the `try` and widening the `except` to
+`(OSError, sqlite3.Error)`. Left in as a permanent regression test.
+
+**Verification.** `memory/store.py` needed no mocking at all -- `sqlite3`
+is stdlib, so `tests/test_memory_store.py`'s 9 tests run against a real
+database file under `tmp_path` (`pytest` was confirmed installable in
+this sandbox this session, unlike prior sessions -- `pip install pytest`
+succeeded, so these ran as real `pytest`, not a standalone mocked
+script). Config (`MemorySettings`, `AppSettings`, `default_config.yaml`
+parsing, and the stale-user-config backfill path) was also verified for
+real with `pydantic`/`PyYAML` installed. `main.py`'s wiring itself could
+only be verified by compilation (`py_compile`) and code review in this
+sandbox -- `PySide6` isn't installed here, so the app can't actually run
+here. **The user ran the built app on real hardware (Windows, RTX 3070
+Ti)**, confirmed `%APPDATA%\Iris\data\conversations.db` was created, and
+read back 3 real turns via `ConversationStore.get_recent_turns()` in the
+correct order with correct content -- this is the first real end-to-end
+confirmation of Part A, not just a sandbox-mocked one.
+
