@@ -201,6 +201,22 @@ real against the actual files, not just asserted). Full reasoning in
 zip described — the *design* was sound, only the implementation was
 missing) and `docs/TODO.md`.
 
+**Session 8 (2026-07-16, same day) — first real-hardware run, one bug
+found and fixed.** The user ran Session 7's build on Windows
+(RTX 3070 Ti): LLM, vision, OCR, wake word, and Whisper all loaded and
+worked correctly first try. TTS voice loading and the `download_voices`
+CLI path also worked correctly. `speak()` crashed: `synthesize_wav()`
+was being called with `length_scale=`/`noise_scale=`/`noise_w_scale=`
+as direct keyword arguments, which the real (offline-guessed) Piper
+API doesn't accept — confirmed via a web search against Piper's actual
+published Python API docs that it wants a single
+`syn_config=SynthesisConfig(...)` object instead. Fixed in
+`tts/engine.py`, with a new regression test asserting the call shape
+directly. See `docs/DECISIONS.md`'s Milestone 8 entry for the full
+account. Synthesis is now confirmed correct only against mocks again
+(no network for a second real-hardware round-trip this session) — still
+needs one more real run to confirm actual audio output.
+
 ## Files modified (Session 7, Milestone 8)
 
 - `tts/__init__.py`, `tts/engine.py` — new package, `TTSEngine`.

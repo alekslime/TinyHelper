@@ -24,14 +24,20 @@ download pattern:
      internal function signatures, which this session had no way to
      confirm (no network in this sandbox -- see docs/DECISIONS.md).
 
-**Not yet run against the real package.** `piper-tts` isn't installed in
-this sandbox (no network to install it). Everything in this file is
-written against Piper's documented public API as of this session's best
-understanding, verified only by unit tests that install a fake `piper`
-module into `sys.modules` (same technique `tests/test_llm_engine.py` uses
-for `llama_cpp`). A real-hardware pass is needed to confirm both the
-`PiperVoice.load()` / `synthesize_wav()` call shapes and the
-`download_voices` CLI invocation actually work as written.
+**Confirmed against a real Piper install (2026-07-16, real hardware).**
+An earlier version of this file called `synthesize_wav(text, wav_file,
+length_scale=..., noise_scale=..., noise_w_scale=...)` -- individual
+kwargs, guessed from general familiarity with older Piper releases
+without network access to check. That was wrong: the real API takes a
+single `syn_config=SynthesisConfig(...)` object instead (confirmed via
+Piper's own published Python API docs after a real run raised
+`TypeError: PiperVoice.synthesize_wav() got an unexpected keyword
+argument 'length_scale'`). Fixed below. Voice loading, the
+`download_voices` CLI download path, and `PiperVoice.load()`'s own
+signature have now also been exercised for real on Windows and worked
+as written -- see `docs/DECISIONS.md`. Playback (`sounddevice`) and
+actual audio quality/latency still need to be confirmed by the person
+running it.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
-from piper import PiperVoice
+from piper import PiperVoice, SynthesisConfig
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +80,19 @@ class TTSEngine:
         noise_scale: float = DEFAULT_NOISE_SCALE,
         noise_w_scale: float = DEFAULT_NOISE_W_SCALE,
     ) -> None:
-        self._length_scale = length_scale
-        self._noise_scale = noise_scale
-        self._noise_w_scale = noise_w_scale
+        # Piper's synthesize_wav() takes a single `syn_config=` object, not
+        # individual length_scale/noise_scale/noise_w_scale kwargs (that
+        # was this file's original mistake -- confirmed against Piper's
+        # actual API docs after a real-hardware run hit
+        # `TypeError: PiperVoice.synthesize_wav() got an unexpected
+        # keyword argument 'length_scale'`; see docs/DECISIONS.md). Built
+        # once here since none of these values change between speak()
+        # calls.
+        self._syn_config = SynthesisConfig(
+            length_scale=length_scale,
+            noise_scale=noise_scale,
+            noise_w_scale=noise_w_scale,
+        )
         # Guards playback so stop() has something to cancel and so two
         # overlapping speak() calls (shouldn't normally happen -- see
         # main.py's interrupt_on_new_query handling -- but worth being
@@ -160,13 +176,7 @@ class TTSEngine:
         """
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav_file:
-            self._voice.synthesize_wav(
-                text,
-                wav_file,
-                length_scale=self._length_scale,
-                noise_scale=self._noise_scale,
-                noise_w_scale=self._noise_w_scale,
-            )
+            self._voice.synthesize_wav(text, wav_file, syn_config=self._syn_config)
         return buffer.getvalue()
 
     def speak(self, text: str) -> None:

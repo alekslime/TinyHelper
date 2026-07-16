@@ -1007,16 +1007,29 @@ already-cached paths, `speak()` synthesize+play, empty-text no-op,
 output). The `config/schema.py` <-> `config/default_config.yaml` field
 match (9 `tts.*` keys) was cross-checked with a script, not eyeballed.
 
-**Not yet verified on real hardware, or even against the real package at
-all.** Two separate gaps:
-1. `piper-tts` isn't installed anywhere this session had access to (no
-   network in this sandbox). Everything in `tts/engine.py` is written
-   against Piper's documented public API as best understood, exercised
-   only via mocks.
-2. No real audio has been heard. Once `piper-tts`/`sounddevice` are
-   properly installed on real hardware, this needs a real run to
-   confirm: voice quality, whether `length_scale` 1.0's default pace
-   sounds right, whether the `download_voices` CLI invocation matches
-   this code's assumptions about its output layout, and real CPU
-   latency (does speech start promptly after a response, or is there an
-   awkward pause).
+**Real hardware run (2026-07-16, same day, Windows/RTX 3070 Ti) — found
+and fixed a real bug.** Everything up through voice loading worked
+first try: `download_voices` CLI invocation matched this code's
+assumptions exactly, `PiperVoice.load()` succeeded, "TTS engine ready"
+logged. `speak()` did not: `synthesize_wav(text, wav_file,
+length_scale=..., noise_scale=..., noise_w_scale=...)` raised
+`TypeError: PiperVoice.synthesize_wav() got an unexpected keyword
+argument 'length_scale'`, which then surfaced downstream as a confusing
+`wave.Error: # channels not specified` (the `wave.open()` context
+manager's `__exit__` failing to close a header that was never written,
+since the real error happened first). Checked against Piper's published
+Python API docs: `synthesize_wav()` takes a single
+`syn_config=SynthesisConfig(...)` object, not individual scale kwargs --
+this file's original version was written from general familiarity with
+older Piper releases, without network access in the sandbox to check,
+and guessed wrong. Fixed: `TTSEngine.__init__` now builds one
+`SynthesisConfig(length_scale=..., noise_scale=..., noise_w_scale=...)`
+and passes it via `syn_config=`. A regression test
+(`test_speak_passes_syn_config_not_individual_scale_kwargs`) now asserts
+the call shape directly so this can't silently regress again. Voice
+loading, the CLI download path, and `PiperVoice.load()`'s signature are
+now confirmed correct on real hardware; `synthesize_wav()`'s corrected
+call shape is confirmed only against mocks again (no network for a
+second real-hardware round-trip this session) -- **still needs one more
+real run to confirm it actually speaks audio out loud**, and to check
+voice quality/pace/latency, none of which have been heard yet.

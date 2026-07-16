@@ -31,6 +31,7 @@ def fake_piper_and_sounddevice(monkeypatch):
     """
     fake_piper = types.ModuleType("piper")
     fake_piper.PiperVoice = MagicMock()
+    fake_piper.SynthesisConfig = MagicMock(side_effect=lambda **kwargs: kwargs)
     monkeypatch.setitem(sys.modules, "piper", fake_piper)
 
     fake_sd = types.ModuleType("sounddevice")
@@ -195,6 +196,29 @@ def test_speak_resets_speaking_flag_even_when_playback_raises(
         engine.speak("hello there")
 
     assert engine._speaking is False
+
+
+def test_speak_passes_syn_config_not_individual_scale_kwargs(
+    fake_piper_and_sounddevice, tmp_path
+) -> None:
+    """Regression test: an earlier version of tts/engine.py called
+    `synthesize_wav(text, wav_file, length_scale=..., noise_scale=...,
+    noise_w_scale=...)` directly, which real Piper rejects with
+    `TypeError: ... unexpected keyword argument 'length_scale'` (found on
+    a real Windows run, 2026-07-16). The real API wants a single
+    `syn_config=SynthesisConfig(...)` object instead.
+    """
+    engine_module = _import_engine()
+    fake_piper, _fake_sd = fake_piper_and_sounddevice
+    engine, fake_voice = _make_engine_with_fake_voice(engine_module, fake_piper, tmp_path)
+
+    engine.speak("hello there")
+
+    _args, kwargs = fake_voice.synthesize_wav.call_args
+    assert "syn_config" in kwargs
+    assert "length_scale" not in kwargs
+    assert "noise_scale" not in kwargs
+    assert "noise_w_scale" not in kwargs
 
 
 def test_synthesize_wav_bytes_returns_valid_wav(fake_piper_and_sounddevice, tmp_path) -> None:
