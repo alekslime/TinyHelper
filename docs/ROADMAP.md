@@ -53,10 +53,14 @@ update it as milestones complete or priorities shift.
 - [x] Smooth fade in/out, no sharp edges, no neon/pulsing — colors
       cross-fade once per state change (350ms) and then sit still
 
-## Milestone 7 — Visual Guidance (planned)
+## Milestone 7 — Visual Guidance ✅ CODE-COMPLETE (pending real-hardware pass on B.4)
 
-- [ ] Overlay rendering: circles, arrows, highlights, bounding boxes, labels
-- [ ] Triggered by LLM/vision reasoning about screen content
+- [x] Overlay rendering — a single flashed rectangle outline (not the
+      original circles/arrows/labels scope; see docs/DECISIONS.md for
+      why the simpler design was chosen)
+- [x] Triggered by LLM/vision reasoning about screen content —
+      `VisionModel.locate()`, wired into `main.py`'s query flow
+- [x] Early-dismiss on the next query or a ~4s cursor dwell (Part B.4)
 
 ## Milestone 8 — Voice Responses (planned)
 

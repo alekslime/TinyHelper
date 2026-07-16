@@ -1,11 +1,13 @@
 # HANDOFF.md
 
-**Last updated:** 2026-07-14
+**Last updated:** 2026-07-16
 **Milestones completed:** 1 through 6 ✅ — plus a targeted vision-gating
-fix, and Milestone 7 (Visual Guidance) is now in progress: Parts B.1,
-B.2, and B.3 done and code-complete; B.3 also has its first real-hardware
-confirmation (Session 5, below). B.4 remaining. See `docs/ROADMAP.md` for
-full milestone history and `docs/TODO.md` for the part-by-part breakdown.
+fix, and Milestone 7 (Visual Guidance) is now code-complete: Parts B.1,
+B.2, B.3, and B.4 are all done. B.3 has its first real-hardware
+confirmation (Session 5, below); B.4 (early-dismiss triggers) is verified
+offscreen only, still needs a real-hardware pass. See `docs/ROADMAP.md`
+for full milestone history and `docs/TODO.md` for the part-by-part
+breakdown.
 
 ---
 
@@ -145,6 +147,21 @@ rather than assumed:
   tuning rather than `-1`/full offload on both). Both flagged as
   follow-ups in `docs/TODO.md`'s "Loose ends" section, not yet done.
 
+**Session 6 (2026-07-16) — Part B.4: early-dismiss triggers.** Two
+triggers now call `clear_target_box()` before `TARGET_BOX_DURATION_MS`
+elapses on its own: (1) the next query, wired in `main.py`'s
+`on_transcribed()`; (2) a ~4s continuous cursor dwell inside the box, via
+a new `_dwell_timer` polling `QCursor.pos()` in
+`aura/renderer/glow_renderer.py`'s `_TargetBoxWidget`. Verified offscreen
+(real `QApplication`/`GlowAuraRenderer`/`AuraController`, simulated dwell
+via monkeypatched `time.monotonic` rather than sleeping real seconds);
+existing 15-test suite unaffected. Full detail in `docs/TODO.md`'s
+Milestone 7 section and `docs/DECISIONS.md`. Not yet run on real
+hardware — this is the user's desktop (RTX 3070 Ti, Ryzen 7 5700X), a
+different machine than Session 5's laptop, so it's also the first chance
+to confirm the CUDA/GPU-offload follow-ups from Session 5 on hardware
+that should actually support them well.
+
 ## Files modified (2026-07-14 sessions)
 
 - `aura/renderer/glow_renderer.py` — the actual Part B.2 work: new
@@ -186,6 +203,20 @@ rather than assumed:
 - `docs/TODO.md` — Part B.3 marked confirmed on real hardware; new
   "Loose ends" entry for the CPU-only-vision / redundant-caption
   findings and their follow-ups.
+- `HANDOFF.md` — this file.
+
+## Files modified (Session 6, Part B.4)
+
+- `main.py` — `on_transcribed()` calls `aura.clear_target_box()` as its
+  first line (next-query dismiss trigger).
+- `aura/renderer/glow_renderer.py` — new `DWELL_DISMISS_MS` /
+  `DWELL_POLL_INTERVAL_MS` constants; `_TargetBoxWidget` gained
+  `_dwell_start`/`_dwell_timer`, `_check_dwell()`, and
+  `_on_auto_hide_timeout()`; `flash()`/`stop()` updated to manage the new
+  timer alongside the existing auto-hide one.
+- `docs/TODO.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md` — Part B.4
+  marked done with reasoning and verification summary; Milestone 7
+  marked code-complete.
 - `HANDOFF.md` — this file.
 
 ## Important implementation details
@@ -250,27 +281,40 @@ rather than assumed:
 ## Current project status
 
 Milestones 1–6 are code-complete and verified on real hardware. Milestone
-7 (Visual Guidance): Parts B.1 (vision model structured output), B.2 (a
-flashed rectangle target box, `_TargetBoxWidget`), and B.3 (wiring
-`main.py`'s query flow to `VisionModel.locate()` and
-`AuraController.show_target_box()`) are all code-complete and verified
-for real in this sandbox. B.3 has additionally been confirmed once on
-real hardware (Windows laptop, Quadro M3000M) — locate → target-box →
-response worked correctly end-to-end with real model weights, though
-real-hardware vision inference is currently slow (CPU-only) and the
-laptop's live config still needs syncing to the newer keyword-gating
-design (see "Known issues" and `docs/TODO.md`'s "Loose ends"). Part B.4
-(early-dismiss triggers) has not been started.
+7 (Visual Guidance) is now code-complete: Parts B.1 (vision model
+structured output), B.2 (a flashed rectangle target box,
+`_TargetBoxWidget`), B.3 (wiring `main.py`'s query flow to
+`VisionModel.locate()` and `AuraController.show_target_box()`), and B.4
+(early-dismiss triggers — next query, ~4s cursor dwell) are all
+code-complete and verified offscreen in this sandbox. B.3 has additionally
+been confirmed once on real hardware (Windows laptop, Quadro M3000M) —
+locate → target-box → response worked correctly end-to-end with real
+model weights, though real-hardware vision inference is currently slow
+(CPU-only) and that laptop's live config still needs syncing to the
+keyword-gating design (see "Known issues" and `docs/TODO.md`'s "Loose
+ends"). B.4 has not yet been run on real hardware at all.
 
 ## Next milestone
 
-**Milestone 7, Part B.4 — Early-dismiss triggers.** The box now
-disappears on its own after `TARGET_BOX_DURATION_MS`, but should also
-clear early via explicit `clear_target_box()` calls on two triggers:
-(1) the next query comes in, (2) the cursor dwells inside the box for
-~4 seconds (matches the existing breathing-pulse period — needs a
-`QTimer` polling `QCursor.pos()` against the box rect, or an event
-filter). This is the last piece of Milestone 7's current scope.
+Milestone 7's current scope is done. Two things are worth doing before
+picking up Milestone 8 (Voice Responses):
+
+1. **Real-hardware pass on Part B.4** — confirm the cursor-dwell dismiss
+   feels right (is 4s too long/short?) and that click-through still holds
+   with the new polling timer running, on a real display and a real
+   mouse.
+2. **The Session 5 performance follow-ups**, still open and now testable
+   on different, stronger hardware (RTX 3070 Ti, Ryzen 7 5700X, per the
+   user) than the laptop that surfaced them: a CUDA-enabled
+   `llama-cpp-python` reinstall for real GPU offload, and syncing
+   `vision.trigger_keywords`/`locate_trigger_keywords` in this machine's
+   own `config.yaml` so `locate()` and `describe()` don't both run on a
+   single "where's X" query. See `docs/TODO.md`'s "Loose ends" section
+   for the full detail.
+
+Once those are confirmed (or at least attempted) on real hardware,
+Milestone 8 — Voice Responses (local TTS output) is next per
+`docs/ROADMAP.md`.
 
 ## Ready-to-copy prompt for the next session
 

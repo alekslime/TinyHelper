@@ -136,7 +136,7 @@ sampling at multiple x-offsets from the edge.
       `tesseract_cmd`) plus the new `trigger_keywords`. Verified the merged
       `AppSettings` still matches schema defaults after the change.
 
-## Milestone 7 — Visual Guidance — IN PROGRESS
+## Milestone 7 — Visual Guidance — code-complete (B.1-B.4), pending real-hardware verification of B.4
 
 Design (2026-07-13, refined through direct back-and-forth; simplified
 2026-07-14): a single target UI element gets a plain rectangle outline
@@ -280,15 +280,64 @@ parts breakdown.
       multi-minute CPU-bound vision pipeline finished — not a wiring
       bug, a visibility-window/perf issue, see Session 5 notes below and
       `TARGET_BOX_DURATION_MS` (now 8s, see `aura/renderer/glow_renderer.py`).
-- [ ] **Part B.4 — Early-dismiss triggers.** The flashed box already
-      disappears on its own after `TARGET_BOX_DURATION_MS`, but it should
-      also clear early via explicit `clear_target_box()` calls on two
-      triggers: (1) the next query comes in, (2) the cursor dwells inside
-      the box for ~4 seconds (matches the existing breathing-pulse period
-      — needs a `QTimer` polling `QCursor.pos()` against the box rect, or
-      an event filter). Not started, blocked on B.3.
+- [x] **Part B.4 — Early-dismiss triggers.** Done (2026-07-16). Two
+      triggers now call `clear_target_box()` before
+      `TARGET_BOX_DURATION_MS` elapses on its own:
+      (1) **Next query** — `main.py`'s `on_transcribed()` calls
+      `aura.clear_target_box()` first thing, covering both real voice
+      input and the debug-text path.
+      (2) **Cursor dwell** — `_TargetBoxWidget` (`aura/renderer/glow_renderer.py`)
+      gained a `_dwell_timer` (`QTimer`, `DWELL_POLL_INTERVAL_MS` = 150ms)
+      polling `QCursor.pos()` against the showing box's rect; continuous
+      containment for `DWELL_DISMISS_MS` (4000ms) dismisses early, leaving
+      the rect resets the dwell clock. Chose polling over a Qt event
+      filter/hover events since the widget is `WA_TransparentForMouseEvents`
+      by design (Part B.2) — see `docs/DECISIONS.md` for the full reasoning,
+      including why the dwell duration is now its own standalone constant
+      rather than tied to the (now-removed) breathing-pulse period the
+      original scoping referenced.
+      **Verified for real** (offscreen `QT_QPA_PLATFORM=offscreen`, real
+      `QApplication`/`GlowAuraRenderer`/`AuraController`/`_TargetBoxWidget`):
+      `clear_target_box()` hides an active box immediately; a simulated
+      continuous dwell past the threshold (via monkeypatching
+      `time.monotonic`, not sleeping real wall-clock seconds) dismisses the
+      box and stops both timers; moving the cursor outside the box resets
+      the dwell clock without an early dismiss; the pre-existing
+      `TARGET_BOX_DURATION_MS` auto-hide path still fires independently and
+      also stops dwell polling. Existing 15-test suite (outside the two
+      pre-existing missing-package collection failures) passes unchanged.
+      **Not yet verified on real hardware** — needs a real display/mouse to
+      confirm the dwell feels right and click-through still holds with the
+      polling timer running.
 
 ## Loose ends / small items
+
+- [ ] **Vision config defaults are stale again (found 2026-07-16, not yet
+      fixed).** The 2026-07-13 fix below ("stale `vision:` section") was
+      supposed to replace the leftover ONNX/moondream2 fields with the
+      current MiniCPM-V-2.6 GGUF ones, but `VisionSettings` in
+      `config/schema.py` *and* `config/default_config.yaml` still default
+      `repo_id`/`model_filename`/`mmproj_filename` to the moondream2
+      values (`moondream/moondream2-gguf`,
+      `moondream2-text-model-f16.gguf`, `moondream2-mmproj-f16.gguf`),
+      not `vision/model.py`'s actual `DEFAULT_REPO_ID`
+      (`openbmb/MiniCPM-V-2_6-gguf`, `ggml-model-Q4_K_M.gguf`,
+      `mmproj-model-f16.gguf`). `vision/model.py`'s own docstring warns
+      this exact mismatch (moondream2 weights loaded through the MiniCPM
+      chat handler) silently produces wrong/incoherent output rather than
+      raising an error, and says it already happened once, during the
+      2026-07-13 session. A fresh install using the shipped default
+      config would hit this silently. Also found the same session: an
+      `enable_locate` field on `VisionSettings` (default `False`, gating
+      all of Part B.1-B.4) that isn't present in
+      `config/default_config.yaml` at all and isn't mentioned anywhere in
+      `docs/ROADMAP.md`/`docs/HANDOFF.md` -- Session 5's real-hardware
+      locate() pass must have used a hand-edited local config, not what
+      ships in this repo. Neither issue started; fix by syncing
+      `schema.py`'s `VisionSettings` defaults and
+      `default_config.yaml`'s `vision:` block to `vision/model.py`'s real
+      defaults, and deciding/documenting `enable_locate`'s intended
+      default.
 
 - [ ] **Real-hardware perf finding (2026-07-14, Session 5):** on the
       Windows laptop (Quadro M3000M, 4GB VRAM), a single vision-gated

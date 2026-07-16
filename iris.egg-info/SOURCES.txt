@@ -3,8 +3,10 @@ README.md
 pyproject.toml
 app/__init__.py
 app/llm_bridge.py
+app/locate_bridge.py
 app/main_window.py
 app/transcript_bridge.py
+app/vision_locate_bridge.py
 app/wake_word_bridge.py
 aura/__init__.py
 aura/controller.py
