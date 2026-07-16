@@ -371,6 +371,28 @@ class TTSSettings(BaseModel):
     )
 
 
+class MemorySettings(BaseModel):
+    """Local conversation history (SQLite) settings (Milestone 9, Part A).
+
+    Each query/response turn is persisted to a small local SQLite
+    database as it happens -- see `memory/store.py`'s `ConversationStore`.
+    This is storage only; nothing here feeds past turns back into the LLM
+    prompt yet (that's Part B, a separate milestone).
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Master switch for conversation history persistence.",
+    )
+    db_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to the SQLite database file. If unset, defaults to "
+            "<app data dir>/data/conversations.db (see config/paths.py's DATA_DIR)."
+        ),
+    )
+
+
 class DebugSettings(BaseModel):
     """Developer-only debug aids. None of this is part of Iris's intended
     end-user UX (which uses Aura + system tray, no visible windows or chat
@@ -404,4 +426,5 @@ class AppSettings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     tts: TTSSettings = Field(default_factory=TTSSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)

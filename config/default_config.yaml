@@ -81,5 +81,9 @@ tts:
   noise_w_scale: 0.8
   interrupt_on_new_query: true  # stop in-progress speech as soon as the next query comes in
 
+memory:
+  enabled: true
+  db_path: null  # defaults to <app data dir>/data/conversations.db
+
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

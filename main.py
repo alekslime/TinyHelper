@@ -12,7 +12,9 @@ Responsible only for wiring things together:
        query can be augmented with a caption of the current screen.
     7. If enabled, construct a local TTS voice, so each LLM response can
        be spoken aloud in addition to being shown in the window.
-    8. Launch the Qt application and a minimal window.
+    8. If enabled, construct a local SQLite-backed conversation store, so
+       each query/response turn is persisted as it happens.
+    9. Launch the Qt application and a minimal window.
 
 No feature logic belongs here — this file should stay small forever.
 """
@@ -22,6 +24,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
@@ -35,8 +38,9 @@ from aura.controller import AuraController
 from aura.renderer.glow_renderer import GlowAuraRenderer
 from aura.renderer.null_renderer import NullAuraRenderer
 from aura.states import AuraState
-from config.paths import MODELS_DIR
+from config.paths import DATA_DIR, MODELS_DIR
 from config.settings import get_settings
+from memory.store import ConversationStore
 from utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -270,6 +274,27 @@ def main() -> int:
             "continuing with text-only responses this session."
         )
 
+    # Milestone 9, Part A: local conversation history (SQLite). Unlike
+    # llm/vision/tts, this has no optional-extra dependency -- `sqlite3` is
+    # in the standard library -- so the only failure mode is a bad/
+    # unwritable db_path, not a missing package. Same graceful-degradation
+    # shape as the others regardless: a failed open leaves
+    # conversation_store = None and turns simply aren't persisted this
+    # session, rather than crashing startup over history logging.
+    conversation_store = None
+    if not settings.memory.enabled:
+        logger.info("Conversation history disabled (memory.enabled=false in config).")
+    else:
+        try:
+            memory_db_path = (
+                Path(settings.memory.db_path) if settings.memory.db_path else DATA_DIR / "conversations.db"
+            )
+            conversation_store = ConversationStore(memory_db_path)
+            logger.info("Conversation history: %s", memory_db_path)
+        except RuntimeError:
+            logger.exception("Could not open the conversation database — continuing without history.")
+            conversation_store = None
+
     # Milestone 7, Part B.3: real on-screen offset of the monitor being
     # captured, so locate()'s percent-of-image coordinates can be converted
     # to real screen pixels (see _percent_box_to_pixels). Stays (0, 0) --
@@ -441,6 +466,19 @@ def main() -> int:
                 temperature=settings.llm.temperature,
             )
             if response:
+                # Milestone 9, Part A: persist the turn as it happens.
+                # Runs on this worker thread (a new one per query) --
+                # ConversationStore.save_turn opens its own short-lived
+                # connection, so this is safe without extra locking. Only
+                # successful turns are saved; a failed/empty generation
+                # has no response worth recording (see on_llm_failed,
+                # which handles that path separately and doesn't call
+                # this).
+                if conversation_store is not None:
+                    try:
+                        conversation_store.save_turn(text, response)
+                    except Exception:
+                        logger.exception("Failed to save conversation turn — continuing.")
                 llm_bridge.report_response(response)
             else:
                 llm_bridge.report_failure("LLM returned an empty response.")
