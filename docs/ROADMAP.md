@@ -72,17 +72,23 @@ update it as milestones complete or priorities shift.
       (Windows, RTX 3070 Ti): LLM, vision, OCR, wake word, Whisper, and
       TTS all load and run correctly, real audio plays.
 
-## Milestone 9 — Conversation Memory (in progress)
+## Milestone 9 — Conversation Memory ✅ COMPLETE (confirmed on real hardware)
 
 - [x] **Part A: SQLite-backed conversation history** — each
       query/response turn persisted to a local SQLite database as it
       happens. See `memory/store.py`'s `ConversationStore`,
       `MemorySettings` in `config/schema.py`, and `HANDOFF.md`'s
       Session 9 entry. Confirmed on real hardware (Windows, RTX 3070 Ti):
-      `%APPDATA%\Iris\data\conversations.db` created, 3 real turns
+      `%APPDATA%\Iris\data\conversations.db` created, real turns
       persisted and read back correctly, in order.
-- [ ] Part B: retrieval for follow-up context (not started — separate
-      session, deliberately out of scope for Part A)
+- [x] **Part B: retrieval for follow-up context.** `LLMEngine.generate()`
+      now accepts a `history` list of `(query, response)` pairs, inserted
+      as alternating user/assistant chat messages; `main.py` fetches the
+      last `memory.context_turns` (default 5) turns from
+      `ConversationStore` and passes them in. Confirmed on real hardware:
+      "my name is Aleks" followed by "what's my name?" correctly
+      answered "Your name is Aleks." See `HANDOFF.md`'s Session 9 entry
+      and `docs/DECISIONS.md`.
 
 ## Milestone 10 — Settings UI (planned)
 

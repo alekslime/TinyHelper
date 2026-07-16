@@ -1034,7 +1034,16 @@ second real-hardware round-trip this session) -- **still needs one more
 real run to confirm it actually speaks audio out loud**, and to check
 voice quality/pace/latency, none of which have been heard yet.
 
-## Milestone 9, Part A — SQLite-backed conversation history (2026-07-16, Session 9)
+## Milestone 9 — SQLite-backed conversation history + follow-up context (2026-07-16, Session 9)
+
+**Scope: this session covered both Part A (storage) and Part B
+(retrieval), back to back.** The user originally scoped Session 9 to
+Part A only, with Part B explicitly deferred to a separate session — but
+after Part A was confirmed working on real hardware, the user asked to
+continue straight into Part B in the same session. Documenting both here
+together since they ended up in the same session's real-hardware pass.
+
+### Part A
 
 **Scope: storage only.** The user explicitly scoped this session to
 persisting turns, not retrieval -- Part B (feeding past turns back into
@@ -1104,4 +1113,92 @@ Ti)**, confirmed `%APPDATA%\Iris\data\conversations.db` was created, and
 read back 3 real turns via `ConversationStore.get_recent_turns()` in the
 correct order with correct content -- this is the first real end-to-end
 confirmation of Part A, not just a sandbox-mocked one.
+
+### Part B
+
+**Chat messages, not string concatenation.** History is inserted into
+`LLMEngine.generate()`'s `messages` list as proper alternating
+`{"role": "user", ...}`/`{"role": "assistant", ...}` entries between the
+system prompt and the current turn -- not concatenated into the prompt
+string the way vision screen-context is (`_build_prompt_with_screen_context`'s
+`f"[{context}]\n\nUser: {text}"` pattern). Chat-completion models are
+trained on this message structure; string-concatenating "previous
+Q: ... A: ..." pairs into a single user-turn string would work far less
+reliably, and `create_chat_completion`'s `messages` parameter already
+supports it directly with no extra work.
+
+**Where history comes from, and what it doesn't include.** `main.py`'s
+`_generate_worker` fetches `settings.memory.context_turns` most-recent
+turns via `ConversationStore.get_recent_turns()` *before* calling
+`llm_engine.generate()` for the current turn -- so the turn currently
+being answered is never in its own history (it hasn't been saved yet;
+`save_turn()` runs after generation succeeds). Deliberately uses the
+*raw* transcribed text stored by `save_turn(text, response)`, not the
+vision-augmented `prompt` string built by
+`_build_prompt_with_screen_context` for the *current* turn -- past turns
+already happened and were already answered with whatever screen context
+applied at the time; re-injecting today's screen context into
+yesterday's stored question would be both wrong and impossible (the old
+screen state isn't stored, only the text was).
+
+**`context_turns=0` disables retrieval, not storage.** `MemorySettings`
+keeps `enabled` (governs Part A persistence) and `context_turns`
+(governs Part B retrieval) as separate knobs on purpose -- someone might
+want a searchable/inspectable history without every future query being
+influenced by it, or vice versa is nonsensical (retrieval needs
+something to retrieve) but the separation still makes the two concerns
+independently toggleable and easier to reason about than one combined
+flag.
+
+**No token-budget accounting.** `context_turns` is a raw turn count
+(default 5), not a token or character budget. `llm.n_ctx` (4096 by
+default) is generous relative to a handful of short turns from a small
+instruct model, so this hasn't been a problem in the real-hardware runs
+so far, but a pathological case (very long individual turns, or a user
+who sets `context_turns` high) could crowd out the actual response or
+even exceed `n_ctx` outright with no graceful degradation -- `llama-cpp-python`'s
+own behavior in that case hasn't been tested. Flagged as a follow-up,
+not fixed here; the plain turn-count approach was chosen deliberately
+over building real token-counting this session, per the "plainest
+possible implementation unless explicitly asked otherwise" style
+preference.
+
+**Verification.** `LLMEngine.generate()`'s new `history` parameter was
+tested for real with `llama_cpp` faked the same way `test_llm_engine.py`
+already fakes it (heavy C++ dependency, no prebuilt wheel in this
+sandbox) -- 4 new tests assert the *exact* `messages` list
+`create_chat_completion` receives, including message order, for
+no-history, with-history, empty-text, and `history=None` cases. This
+tests message assembly for real against the actual code path, just not
+real inference. `main.py`'s wiring (fetching history, reversing to
+chronological order, passing it through) was only verified by
+`py_compile` + code review in this sandbox, same limitation as Part A.
+
+**Real-hardware confirmation, and a real deployment gotcha along the
+way.** The user's first attempt at testing Part B on real hardware
+appeared to fail -- "my name is Aleks" followed by "what's my name?"
+got "I'm sorry, but I don't have access to that information," twice in
+a row. Before treating that as a real bug, checked two things directly
+rather than guessing: `Select-String 'context_turns'` against the live
+`%APPDATA%\Iris\config\config.yaml` came back empty (should have been
+backfilled to `5` by `config/settings.py`'s existing backfill logic),
+and `Select-String 'history=history' main.py` in the folder the user
+was actually running from *also* came back empty. Both pointed to the
+same root cause: the zip containing Part B's code had not actually
+overwritten the files in `C:\Users\aleks\TinyHelper` -- the user was
+still running Part-A-only `main.py` against Part-A-only
+`default_config.yaml`, so no history was ever being fetched or passed
+in at all. This is the same "the zip didn't actually land" failure
+mode documented repeatedly earlier in this file (Sessions 3, 4, 7) --
+this time surfacing as a false negative on the user's end rather than
+missing code showing up in a fresh sandbox checkout. After the user
+re-extracted the zip and confirmed `Select-String 'history=history'
+main.py` found a match, the same test passed for real: "hi. my name is
+Aleks" -> "Hi Aleks, how can I assist you today?", then "wait. whats my
+name?" -> "Your name is Aleks." -- confirmed by reading the saved turns
+back out of `conversations.db` directly, not just trusting the on-screen
+response. **Lesson for future sessions:** when a real-hardware test of
+freshly-delivered code produces a suspicious result, check that the
+delivered code is actually what's running (grep for a distinguishing
+string from the new code) before spending time debugging the "bug."
 

@@ -402,24 +402,38 @@ parts breakdown.
       Swapping models is a one-line `config.yaml` change
       (`llm.repo_id`/`llm.filename`, or `llm.local_model_path` for a local
       file) — no code changes needed.
-- [x] No conversation memory yet — each `LLMEngine.generate()` call is
+- [x] No conversation memory yet — each `LLMEngine.generate()` call was
       independent, seeded only with the system prompt.
-      **Milestone 9, Part A (2026-07-16, Session 9): fixed —
-      query/response turns are now persisted** to a local SQLite database
-      via `memory/store.py`'s `ConversationStore`, wired into `main.py`'s
-      `_generate_worker` right after a successful response. Confirmed on
-      real hardware (Windows, RTX 3070 Ti): `conversations.db` created
-      under `%APPDATA%\Iris\data\`, 3 real turns saved and read back
-      correctly. **This is storage only** — nothing yet feeds past turns
-      back into the LLM prompt; that's Part B (retrieval for follow-up
-      context), not started, deliberately out of scope for this session.
-      9 new real tests in `tests/test_memory_store.py`, run for real
-      against actual `sqlite3` (stdlib, nothing to mock) — found and
-      fixed one real bug along the way (`ConversationStore.__init__`'s
-      `mkdir` raised an uncaught `FileExistsError` instead of the
-      intended `RuntimeError` when the parent path collided with an
-      existing file). See `HANDOFF.md`'s Session 9 entry and
-      `docs/DECISIONS.md`.
+      **Milestone 9, Parts A and B (2026-07-16, Session 9): fixed.**
+      Part A: query/response turns are persisted to a local SQLite
+      database via `memory/store.py`'s `ConversationStore`, wired into
+      `main.py`'s `_generate_worker` right after a successful response.
+      Part B: `LLMEngine.generate()` now accepts a `history` list of
+      `(query, response)` pairs, inserted as alternating user/assistant
+      chat messages; `main.py` fetches the last `memory.context_turns`
+      (default 5, config setting) turns from `ConversationStore` before
+      each generation call. Both confirmed on real hardware (Windows,
+      RTX 3070 Ti): `conversations.db` created under
+      `%APPDATA%\Iris\data\`, turns saved/read back correctly, and a
+      genuine follow-up ("my name is Aleks" then "what's my name?")
+      correctly answered "Your name is Aleks." 13 new real tests total
+      (9 in `tests/test_memory_store.py` against actual `sqlite3`, 4 in
+      `tests/test_llm_engine.py` asserting the exact chat-message order
+      sent to the model) — found and fixed one real bug along the way
+      (`ConversationStore.__init__`'s `mkdir` raised an uncaught
+      `FileExistsError` instead of the intended `RuntimeError` when the
+      parent path collided with an existing file). **A real deployment
+      gotcha also surfaced mid-session and is worth remembering:** the
+      user's first real-hardware test of Part B used a stale `main.py`
+      that didn't actually contain the Part B code (confirmed by
+      `Select-String 'history=history' main.py` coming back empty) —
+      the zip hadn't actually overwritten the old files in the folder
+      they launched from. The symptom looked exactly like a real bug
+      (follow-up questions got "I don't have access to that
+      information") until checked directly. No token-budget accounting
+      against `llm.n_ctx` yet for `memory.context_turns` — see
+      `docs/DECISIONS.md`. See `HANDOFF.md`'s Session 9 entry for the
+      full account.
 - [x] **Milestone 8: local voice output (Piper) — confirmed on real
       hardware (2026-07-16, Session 8).** LLM responses are now spoken
       aloud via `tts/engine.py`'s `TTSEngine`, in addition to being shown

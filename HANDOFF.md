@@ -3,12 +3,21 @@
 **Last updated:** 2026-07-16 (Session 9)
 **Milestones completed:** 1 through 6 ✅, Milestone 7 (Visual Guidance)
 code-complete (B.1-B.4), Milestone 8 (Voice Responses) confirmed on real
-hardware (Session 8), and Milestone 9 Part A (SQLite-backed conversation
-history) is done and confirmed on real hardware as of Session 9 below.
-Milestone 9 Part B (retrieval for follow-up context) has not been
-started. B.3/B.4 (Milestone 7) still only have partial or no
-real-hardware confirmation — see `docs/ROADMAP.md` for full milestone
-history and `docs/TODO.md` for the part-by-part breakdown.
+hardware (Session 8), and Milestone 9 (Conversation Memory, both Part A
+and Part B) is done and confirmed on real hardware as of Session 9
+below. B.3/B.4 (Milestone 7) still only have partial or no real-hardware
+confirmation — see `docs/ROADMAP.md` for full milestone history and
+`docs/TODO.md` for the part-by-part breakdown.
+
+**Read this before starting a new session:** Session 9 hit a real
+"the zip didn't land" problem again, but on the user's end this time —
+their first real-hardware test of Part B produced a result that looked
+exactly like a bug (follow-up questions got a generic "I don't have
+access to that information") until `Select-String 'history=history'
+main.py` on their machine came back empty, confirming they were still
+running the old pre-Part-B `main.py`. **If a real-hardware test result
+looks wrong, grep for a distinguishing string from the new code on the
+machine that ran it before debugging further.**
 
 **Read this first if you're starting Milestone 9 (or anything else):**
 Session 7 (below) is the *third* time in a row this project's zip export
@@ -249,18 +258,60 @@ itself was only verified by `py_compile` + code review in this sandbox
 confirmed it actually works end-to-end. Full reasoning in
 `docs/DECISIONS.md`'s Milestone 9 Part A entry.
 
-## Files modified (Session 9, Milestone 9 Part A)
+**Session 9 continued, same day — Milestone 9, Part B: retrieval for
+follow-up context.** Originally scoped as a separate future session, but
+the user asked to continue straight into it after Part A was confirmed.
+`LLMEngine.generate()` (`llm/engine.py`) now accepts an optional
+`history: list[tuple[str, str]] | None` parameter, inserted as
+alternating user/assistant chat messages between the system prompt and
+the current turn — a real change to the chat-completion `messages` list,
+not string concatenation into the prompt. `MemorySettings.context_turns`
+(default 5, config-driven) added. `main.py`'s `_generate_worker` fetches
+that many recent turns from `ConversationStore.get_recent_turns()`
+before each generation call, reverses them to chronological order, and
+passes them through. 4 new tests in `tests/test_llm_engine.py` (same
+faked-`llama_cpp` pattern the file already used) assert the *exact*
+`messages` list sent to the model for no-history, with-history,
+empty-text, and `history=None` cases — all 45 tests in the suite passed.
+
+**Real-hardware confirmation hit a real deployment snag first.** The
+user's first Part B test looked like a bug: "my name is Aleks" then
+"what's my name?" got a generic "I don't have access to that
+information," twice. Checked directly rather than debugging blind:
+`Select-String 'context_turns'` against the live
+`%APPDATA%\Iris\config\config.yaml` came back empty (should have been
+backfilled), and `Select-String 'history=history' main.py` in the
+folder the user was running from *also* came back empty — confirming
+the zip's Part B code had never actually landed in
+`C:\Users\aleks\TinyHelper`; the user was still running the old
+Part-A-only build. Same "the zip didn't land" failure mode documented
+in earlier sessions, this time on the delivery side rather than a fresh
+sandbox checkout. After the user re-extracted and confirmed the grep
+found a match, the real test passed: "hi. my name is Aleks" → "Hi Aleks,
+how can I assist you today?", then "wait. whats my name?" → "Your name
+is Aleks." — confirmed by reading `conversations.db` directly, not just
+trusting the on-screen reply. Full reasoning, including the
+no-token-budget-accounting caveat on `context_turns`, in
+`docs/DECISIONS.md`'s Milestone 9 Part B entry.
+
+## Files modified (Session 9, Milestone 9 — Parts A and B)
 
 - `memory/store.py` — new, `ConversationStore` (`save_turn`,
   `get_recent_turns`, `count_turns`).
-- `config/schema.py` — `MemorySettings` added, registered on
-  `AppSettings`.
+- `config/schema.py` — `MemorySettings` added (`enabled`, `db_path`,
+  `context_turns`), registered on `AppSettings`.
 - `config/default_config.yaml` — matching `memory:` block added.
+- `llm/engine.py` — `LLMEngine.generate()` gained an optional `history`
+  parameter, inserted as alternating user/assistant chat messages;
+  class docstring updated.
 - `main.py` — `ConversationStore` construction (graceful-degradation
   pattern), `save_turn()` call in `_generate_worker` after a successful
-  response, module docstring's numbered list updated.
+  response, history fetch + reversal + pass-through before
+  `llm_engine.generate()`, module docstring's numbered list updated.
 - `tests/test_memory_store.py` — new, 9 real tests against actual
   `sqlite3`.
+- `tests/test_llm_engine.py` — 4 new tests asserting `generate()`'s
+  exact chat-message assembly with/without history.
 - `docs/ROADMAP.md`, `docs/TODO.md`, `docs/DECISIONS.md`, `HANDOFF.md`
   — this file.
 
@@ -411,29 +462,36 @@ syncing to the keyword-gating design (see `docs/TODO.md`'s "Loose
 ends"). B.4 has still not been run on real hardware at all. Milestone 8
 (Voice Responses) is confirmed on real hardware (Session 8, Windows RTX
 3070 Ti) — LLM, vision, OCR, wake word, Whisper, and TTS all load and
-run correctly, real audio plays. Milestone 9 Part A (SQLite-backed
-conversation history) is done and confirmed on real hardware as of
-Session 9 — turns are being persisted correctly. Part B (retrieval for
-follow-up context) has not been started.
+run correctly, real audio plays. **Milestone 9 (Conversation Memory,
+both Part A and Part B) is done and confirmed on real hardware as of
+Session 9** — turns are persisted, and follow-up questions ("what's my
+name?" after "my name is Aleks") are correctly answered using that
+history. No milestone currently has open, unstarted scope other than
+leftover real-hardware confirmation gaps (Milestone 7's B.4, and the
+Session 5 performance follow-ups) and Milestone 10 (Settings UI),
+per `docs/ROADMAP.md`.
 
 ## Next milestone
 
-Milestone 9 Part A is done. Two things are open, either is a reasonable
-next session:
+Two things are open, either is a reasonable next session:
 
-1. **Milestone 9, Part B — retrieval for follow-up context.** Feed
-   recent turns from `ConversationStore.get_recent_turns()` back into
-   the LLM prompt so follow-up questions have context (e.g. "what did I
-   just ask you"). This is the harder half of Milestone 9 — needs a
-   design decision on how many turns / how much text to include without
-   blowing the context window, and how that interacts with
-   `_build_prompt_with_screen_context`'s existing prompt-assembly logic.
+1. **Milestone 10 — Settings UI.** A user-facing settings screen
+   wrapping the existing `config/` system, per `docs/ROADMAP.md`. Also a
+   natural point to finally retire `debug.enabled`'s dev-only text-input
+   panel (`app/main_window.py`), per `docs/TODO.md`'s long-standing
+   "Loose ends" item.
 2. **Leftover real-hardware gaps from Milestone 7**, still open: a
    real-hardware pass on Part B.4 (does the ~4s cursor-dwell dismiss feel
    right?), and the Session 5 performance follow-ups (CUDA-enabled
    `llama-cpp-python`, syncing `vision.trigger_keywords`/
    `locate_trigger_keywords` in the live config) — see `docs/TODO.md`'s
    "Loose ends" section for full detail.
+
+Also worth a look whenever it comes up naturally, not urgent enough to
+be its own session: `memory.context_turns` has no token-budget
+accounting against `llm.n_ctx` (see `docs/DECISIONS.md`'s Milestone 9
+Part B entry) — fine at the current default of 5 short turns, but worth
+revisiting if real usage pushes it higher or turns get long.
 
 ## Ready-to-copy prompt for the next session
 
@@ -445,41 +503,43 @@ Before writing any code:
 2. Read every file inside /docs
 3. Understand the current project state
 
-Milestones 1-8 are done and confirmed on real hardware. Milestone 9,
-Part A (SQLite-backed conversation history, memory/store.py's
-ConversationStore) is done and confirmed on real hardware as of Session
-9 -- query/response turns are persisted to a local SQLite database as
-they happen. This is storage only: nothing yet feeds past turns back
-into the LLM prompt.
+Milestones 1-9 are done and confirmed on real hardware, including
+Milestone 9's Part B (retrieval for follow-up context) -- LLMEngine.generate()
+accepts a history parameter, main.py fetches recent turns from
+ConversationStore and passes them in, confirmed on real hardware with a
+genuine follow-up question working correctly. See HANDOFF.md's Session 9
+entries and docs/DECISIONS.md for full detail, including a real
+deployment gotcha (a stale main.py without Part B's code) that looked
+like a bug until checked directly with a grep on the machine that ran
+it -- worth remembering if a real-hardware test result looks wrong
+again.
 
-Start with Milestone 9, Part B -- retrieval for follow-up context:
-  1. Design how many recent turns (or how much text) get pulled from
-     ConversationStore.get_recent_turns() and fed into the LLM prompt,
-     without blowing LLMSettings.n_ctx. Explain the tradeoff you picked
-     in docs/DECISIONS.md.
-  2. Wire it into main.py's _build_prompt_with_screen_context (or a new
-     helper alongside it) so follow-up questions ("what did I just ask
-     you") actually have context.
-  3. Add a config setting for how much history to include (matching the
-     MemorySettings pattern already in config/schema.py).
-  4. Confirm end-to-end as best this sandbox allows -- memory/store.py
-     itself can be tested for real (sqlite3 is stdlib), but main.py's
-     full wiring can only be verified by compilation/code review here
-     since PySide6 isn't installed in this sandbox. Say so plainly.
+Pick up either:
+  1. Milestone 10 -- Settings UI (a user-facing screen wrapping
+     config/), per docs/ROADMAP.md. Also a natural point to retire
+     debug.enabled's dev-only text-input panel.
+  2. Leftover Milestone 7 real-hardware gaps: a real-hardware pass on
+     Part B.4 (cursor-dwell target-box dismiss), and the Session 5
+     performance follow-ups (CUDA-enabled llama-cpp-python, syncing
+     vision.trigger_keywords/locate_trigger_keywords in the live
+     config) -- see docs/TODO.md's "Loose ends" section.
+
+Confirm with the user which one before starting, since neither was
+explicitly requested yet as of this file's last update.
 
 IMPORTANT -- read this before touching anything: this project's zip
 exports have repeatedly NOT contained the previous session's finished
-work (documented in earlier entries in this file). Before writing any
-code this session: diff what HANDOFF.md/docs/TODO.md claim is done
-against what's actually importable/present in the checkout (main.py,
-memory/store.py, config/schema.py's MemorySettings). If Part A's wiring
-isn't actually present, say so plainly and rebuild it before starting
-Part B -- don't build retrieval on top of storage that doesn't exist in
-this checkout.
+work, and Session 9 also hit this from the other direction -- the
+user's own machine was still running stale code after a zip delivery,
+which looked exactly like a real bug until checked directly (grep for a
+distinguishing string from the new code, both in the zip you're about
+to build on top of AND, if a real-hardware test result looks
+suspicious, on the machine that ran it). Before writing any code this
+session: diff what HANDOFF.md/docs/TODO.md claim is done against what's
+actually importable/present in the checkout.
 
 Work incrementally, in small parts (not all at once -- confirm progress
-with me between parts). Do not begin implementing anything beyond
-Milestone 9's scope. Do not write fake/mock-only "it imports" tests --
+with me between parts). Do not write fake/mock-only "it imports" tests --
 verify things for real wherever this sandbox allows, and say plainly
 when something genuinely can't be (e.g. real model weights, a real
 display, real hardware). End the session by updating HANDOFF.md and
