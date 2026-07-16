@@ -90,9 +90,22 @@ update it as milestones complete or priorities shift.
       answered "Your name is Aleks." See `HANDOFF.md`'s Session 9 entry
       and `docs/DECISIONS.md`.
 
-## Milestone 10 — Settings UI (planned)
+## Milestone 10 — Dynamic Island (reframed 2026-07-16, in progress)
 
-- [ ] User-facing settings screen (wraps `config/` system)
+Replaces the original "generic settings screen" plan — see
+`docs/DECISIONS.md`'s Milestone 10 entry for the reasoning. Settings
+access now lives inside the island rather than as a separate screen.
+
+- [x] Part A — Static island widget (`app/dynamic_island.py`): shape,
+      near-black/frosted-glass color, collapsed/expanded states,
+      bottom-center positioning. Verified offscreen (real painted
+      pixels). No activation wiring yet.
+- [ ] Part B — Activation triggers: global keyboard shortcut + existing
+      voice wake word, both expanding the island.
+- [ ] Part C — Settings icon/button inside the expanded island opens a
+      real (if minimal) settings surface.
+- [ ] Part D — Retire `app/main_window.py`'s always-visible placeholder
+      window now that the island covers its debug/interaction role.
 
 ## Later / Out of scope for MVP
 

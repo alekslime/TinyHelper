@@ -1,13 +1,25 @@
 # HANDOFF.md
 
-**Last updated:** 2026-07-16 (Session 9)
+**Last updated:** 2026-07-16 (Session 10)
 **Milestones completed:** 1 through 6 ✅, Milestone 7 (Visual Guidance)
 code-complete (B.1-B.4), Milestone 8 (Voice Responses) confirmed on real
-hardware (Session 8), and Milestone 9 (Conversation Memory, both Part A
-and Part B) is done and confirmed on real hardware as of Session 9
-below. B.3/B.4 (Milestone 7) still only have partial or no real-hardware
+hardware (Session 8), Milestone 9 (Conversation Memory, both Part A and
+Part B) done and confirmed on real hardware as of Session 9, and
+Milestone 10 (reframed as the Dynamic Island, replacing the original
+"generic settings screen" plan — see `docs/DECISIONS.md`) has Part A
+(static widget) done as of Session 10 below, with Parts B-D still open.
+B.3/B.4 (Milestone 7) still only have partial or no real-hardware
 confirmation — see `docs/ROADMAP.md` for full milestone history and
 `docs/TODO.md` for the part-by-part breakdown.
+
+**Read this before starting a new session:** Milestone 10's scope
+changed mid-stream (Session 10) from "generic settings screen wrapping
+`config/`" to a Dynamic-Island-style floating pill overlay, with
+settings access moving inside the island rather than being its own
+screen — see `docs/DECISIONS.md`'s Milestone 10 entry for the full
+reasoning before continuing this milestone. Only Part A (the static
+widget, `app/dynamic_island.py`) is done; it is not wired into `main.py`
+at all yet.
 
 **Read this before starting a new session:** Session 9 hit a real
 "the zip didn't land" problem again, but on the user's end this time —
@@ -39,7 +51,43 @@ they disagree, say so plainly and treat the checkout as ground truth.
 
 ## Summary of work completed since the last HANDOFF.md update
 
-Three sessions since this file was last written:
+**Session 10 (2026-07-16, same day) — Milestone 10 reframed, Part A:
+static Dynamic Island widget.** The user redirected this milestone
+before any settings-screen code was written: instead of a generic
+settings UI, Iris gets a Dynamic-Island-style floating pill overlay,
+with settings access moving inside it (a later part) rather than being
+its own screen. Before writing anything, diffed HANDOFF.md/`docs/`
+against the actual checkout (per the standing instruction above) —
+everything Session 9 claimed (`ConversationStore`, history wired into
+`main.py` and `LLMEngine.generate()`) was genuinely present this time,
+no repeat of the earlier zip-didn't-land problem. Also read
+`aura/controller.py`, `aura/renderer/base.py`, and
+`aura/renderer/glow_renderer.py` before deciding where the island should
+live — see `docs/DECISIONS.md` for why it became a new, independent
+module (`app/dynamic_island.py`) rather than another `AuraRenderer`.
+
+Built `DynamicIslandWidget`: frameless/translucent/always-on-top,
+anchored bottom-center of the primary screen, with `IslandState.COLLAPSED`
+(small pill) and `IslandState.EXPANDED` (larger panel with placeholder
+title/status text and a decorative settings glyph) states, an animated
+geometry transition between them, near-black (`#1A1A1A`-equivalent)
+color per the user's explicit call, and a gradient+rim treatment
+approximating a frosted-glass look (real backdrop blur not attempted —
+platform-specific, real-hardware-only). This sandbox turned out to have
+a working `PySide6` install under `QT_QPA_PLATFORM=offscreen` this time
+(confirmed fresh rather than assumed) — used it to grab and inspect the
+widget's actual painted pixels for both states rather than relying on
+code review alone, and visually reviewed the composited renders before
+tuning the glass effect to be more visible per the user's feedback. Full
+verification detail in `docs/DECISIONS.md`.
+
+Scoped as Part A only, per the user's explicit choice to confirm before
+each part rather than build B-D in the same pass. Nothing wired into
+`main.py` yet — no hotkey, no wake-word hookup, no working settings
+button, `app/main_window.py` untouched. `docs/ROADMAP.md`'s Milestone 10
+entry rewritten to reflect the new direction.
+
+Three sessions since this file was last written (prior to Session 10):
 
 **Session 1 (2026-07-13) — Part B.1: vision model structured output.**
 `VisionModel.locate(image, target)` added to `vision/model.py`:
@@ -294,6 +342,20 @@ trusting the on-screen reply. Full reasoning, including the
 no-token-budget-accounting caveat on `context_turns`, in
 `docs/DECISIONS.md`'s Milestone 9 Part B entry.
 
+## Files modified (Session 10, Milestone 10 Part A)
+
+- `app/dynamic_island.py` — new file, `DynamicIslandWidget` and
+  `IslandState`. Static shape/color/positioning only; no wiring into
+  `main.py`.
+- `docs/ROADMAP.md` — Milestone 10 rewritten from "generic settings
+  screen" to the Dynamic Island direction; Part A marked done.
+- `docs/TODO.md` — new Milestone 10 section with Part A's verification
+  summary; Parts B-D listed as open.
+- `docs/DECISIONS.md` — new entry: why a new module instead of an
+  `AuraRenderer`, why `app/` instead of a new `ui/` package, the color
+  and frosted-glass choices, and the verification approach/limits.
+- `HANDOFF.md` — this file.
+
 ## Files modified (Session 9, Milestone 9 — Parts A and B)
 
 - `memory/store.py` — new, `ConversationStore` (`save_turn`,
@@ -450,6 +512,15 @@ no-token-budget-accounting caveat on `context_turns`, in
   test file; worth turning into `tests/test_aura_*.py` at some point
   (needs `PySide6` + `pytest-qt` or an offscreen fixture, which the
   existing `tests/` suite doesn't set up yet).
+- **Dynamic Island Part A (`app/dynamic_island.py`) has only been
+  verified offscreen** — real painted pixels for both states, screen
+  anchoring math, transparent corners, near-black center, visual review
+  at 2x/3x zoom. Not verified: real transparency/compositing over actual
+  desktop content, real-monitor DPI scaling, whether `Qt.WindowType.Tool`
+  keeps it off the taskbar/alt-tab on real Windows the same way it does
+  for the Aura overlay, and whether the faked frosted-glass gradient/rim
+  actually reads as intended over real content (vs. the synthetic
+  background used for review here).
 
 ## Current project status
 
@@ -466,26 +537,39 @@ run correctly, real audio plays. **Milestone 9 (Conversation Memory,
 both Part A and Part B) is done and confirmed on real hardware as of
 Session 9** — turns are persisted, and follow-up questions ("what's my
 name?" after "my name is Aleks") are correctly answered using that
-history. No milestone currently has open, unstarted scope other than
-leftover real-hardware confirmation gaps (Milestone 7's B.4, and the
-Session 5 performance follow-ups) and Milestone 10 (Settings UI),
-per `docs/ROADMAP.md`.
+history. **Milestone 10 has been reframed** (Session 10) from a generic
+settings screen to a Dynamic Island floating pill overlay, with Part A
+(the static widget, `app/dynamic_island.py`) done and verified offscreen
+— see `docs/DECISIONS.md` for the reasoning behind the redirect. Parts
+B (activation triggers), C (settings surface), and D (retire
+`app/main_window.py`) are still open, plus leftover real-hardware
+confirmation gaps from Milestone 7 (B.4, and the Session 5 performance
+follow-ups), per `docs/ROADMAP.md`.
 
 ## Next milestone
 
-Two things are open, either is a reasonable next session:
+The user confirmed a part-by-part approach for Milestone 10 — the
+natural next step is:
 
-1. **Milestone 10 — Settings UI.** A user-facing settings screen
-   wrapping the existing `config/` system, per `docs/ROADMAP.md`. Also a
-   natural point to finally retire `debug.enabled`'s dev-only text-input
-   panel (`app/main_window.py`), per `docs/TODO.md`'s long-standing
-   "Loose ends" item.
+1. **Milestone 10, Part B — activation triggers.** Wire a global
+   keyboard shortcut (needs a Windows global-hotkey mechanism —
+   `pywin32`'s `RegisterHotKey`, or the `keyboard` package — since Qt's
+   own `QShortcut` only fires when Iris has focus) and hook the existing
+   voice wake word path (`main.py`'s `on_wake_word_detected`) so either
+   trigger calls `DynamicIslandWidget.expand()`. Decide and document
+   what collapses it again (timeout / another press / explicit dismiss).
+
+Also still open, either is a reasonable session instead:
+
 2. **Leftover real-hardware gaps from Milestone 7**, still open: a
    real-hardware pass on Part B.4 (does the ~4s cursor-dwell dismiss feel
    right?), and the Session 5 performance follow-ups (CUDA-enabled
    `llama-cpp-python`, syncing `vision.trigger_keywords`/
    `locate_trigger_keywords` in the live config) — see `docs/TODO.md`'s
    "Loose ends" section for full detail.
+3. **Milestone 10 Part A's real-hardware gaps** — does the frosted-glass
+   effect actually read well over real desktop content, and does the
+   island stay off the taskbar/alt-tab as intended.
 
 Also worth a look whenever it comes up naturally, not urgent enough to
 be its own session: `memory.context_turns` has no token-budget
@@ -503,29 +587,31 @@ Before writing any code:
 2. Read every file inside /docs
 3. Understand the current project state
 
-Milestones 1-9 are done and confirmed on real hardware, including
-Milestone 9's Part B (retrieval for follow-up context) -- LLMEngine.generate()
-accepts a history parameter, main.py fetches recent turns from
-ConversationStore and passes them in, confirmed on real hardware with a
-genuine follow-up question working correctly. See HANDOFF.md's Session 9
-entries and docs/DECISIONS.md for full detail, including a real
-deployment gotcha (a stale main.py without Part B's code) that looked
-like a bug until checked directly with a grep on the machine that ran
-it -- worth remembering if a real-hardware test result looks wrong
-again.
+Milestones 1-9 are done and confirmed on real hardware. Milestone 10 has
+been reframed (Session 10) from a generic settings screen to a Dynamic
+Island floating pill overlay -- see docs/DECISIONS.md's Milestone 10
+entry for the full reasoning. Part A (the static widget,
+app/dynamic_island.py -- shape, near-black/frosted-glass color,
+collapsed/expanded states, bottom-center positioning) is done and
+verified offscreen (real painted pixels, not just code review). Nothing
+is wired into main.py yet.
 
-Pick up either:
-  1. Milestone 10 -- Settings UI (a user-facing screen wrapping
-     config/), per docs/ROADMAP.md. Also a natural point to retire
-     debug.enabled's dev-only text-input panel.
-  2. Leftover Milestone 7 real-hardware gaps: a real-hardware pass on
-     Part B.4 (cursor-dwell target-box dismiss), and the Session 5
-     performance follow-ups (CUDA-enabled llama-cpp-python, syncing
-     vision.trigger_keywords/locate_trigger_keywords in the live
-     config) -- see docs/TODO.md's "Loose ends" section.
+Pick up Milestone 10, Part B -- activation triggers: wire a global
+keyboard shortcut (needs a real Windows global-hotkey mechanism, e.g.
+pywin32's RegisterHotKey or the keyboard package -- Qt's own QShortcut
+only fires when Iris has focus) and the existing voice wake word path
+(main.py's on_wake_word_detected) so either one calls
+DynamicIslandWidget.expand(). Decide and document what collapses it
+again. Confirm this is still the right next step with the user before
+starting, and keep working in small, confirmed parts rather than doing
+B-D in one pass, per the user's stated preference.
 
-Confirm with the user which one before starting, since neither was
-explicitly requested yet as of this file's last update.
+If the user would rather pick up something else instead, the other open
+items are: leftover Milestone 7 real-hardware gaps (Part B.4 cursor-dwell
+dismiss, and the Session 5 performance follow-ups -- see docs/TODO.md's
+"Loose ends" section), or a real-hardware pass on Dynamic Island Part A
+itself (does the frosted-glass effect read well over real desktop
+content, does it stay off the taskbar/alt-tab).
 
 IMPORTANT -- read this before touching anything: this project's zip
 exports have repeatedly NOT contained the previous session's finished

@@ -1202,3 +1202,92 @@ freshly-delivered code produces a suspicious result, check that the
 delivered code is actually what's running (grep for a distinguishing
 string from the new code) before spending time debugging the "bug."
 
+## Milestone 10 (reframed) — Dynamic Island, Part A
+
+**Scope change from the original plan.** The roadmap's original
+Milestone 10 was "a user-facing settings screen wrapping `config/`."
+The user redirected this session before any of that was built: instead
+of a standalone settings screen, Iris gets a Dynamic-Island-style
+floating pill overlay (bottom-center, frameless, collapsed by default,
+expandable via a global hotkey or the existing wake word), and settings
+access moves *inside* the island's expanded state (a button, wired in a
+later part) rather than being its own always-visible surface. This is a
+genuine scope change, not an addition — the "generic settings screen"
+framing is retired in favor of this. `docs/ROADMAP.md`'s Milestone 10
+entry has been rewritten accordingly.
+
+**New module, not a new `AuraRenderer`.** Before writing any code, read
+`aura/controller.py`, `aura/renderer/base.py`, and
+`aura/renderer/glow_renderer.py`. `AuraRenderer`'s entire contract is
+"represent an `AuraState` as an ambient full-screen edge color, plus one
+unrelated flash-a-target-box affordance" — it has no concept of layout,
+text, icons, or expand/collapse, and every existing implementation
+(`NullAuraRenderer`, `GlowAuraRenderer`) is a full-screen, click-through,
+content-free overlay. Forcing the island's very different shape (a
+small anchored panel with real content and, eventually, real clicks)
+through that interface would mean either bloating `AuraRenderer` with
+island-specific methods that `GlowAuraRenderer` would have to ignore, or
+making the island quietly implement an interface whose entire premise
+(one ambient color, screen-edge shaped) doesn't apply to it. Chose to
+build it as a fully independent widget instead — `app/dynamic_island.py`
+— that `main.py` will own alongside `AuraController`, not through it.
+The two overlays are visually and behaviorally independent (the ambient
+glow keeps running underneath regardless of the island's state), which
+matches how the user described the reference screenshots: the island is
+a distinct UI surface, not a mode of the glow.
+
+**`app/`, not a new `ui/` package.** `app/main_window.py` is already
+this project's "top-level window" location, and the island is exactly
+that kind of thing (a real, eventually-interactive top-level widget) —
+introducing a new top-level package for a single file didn't seem worth
+it yet. If a real settings *panel* (Part C) or other UI surfaces show up
+later and this starts feeling crowded, revisit and promote to `ui/` at
+that point; nothing here forecloses that.
+
+**Color: near-black gray, not pure black.** User's explicit call
+(`#1a1a1a`-equivalent, `RGB(0x1A, 0x1A, 0x1A)`) over pure black — a flat
+`RGB(0,0,0)` panel with `WA_TranslucentBackground` tends to read as a
+dead cutout rather than a lit surface on typical (non-OLED) displays;
+a near-black gray keeps a faint sense of material to it.
+
+**"Frosted glass" is faked, not real backdrop blur.** The user asked
+about a frosted-glass look. Real OS-level backdrop blur (Windows
+Acrylic / DWM blur-behind) is a platform-specific compositor feature —
+this sandbox has no Windows, no real compositor, and no way to verify
+it, and wiring up `pywin32` DWM calls blind felt like exactly the kind
+of thing that should get a real-hardware pass rather than be trusted on
+faith. Instead, Part A fakes the "glass" impression with (1) a subtle
+vertical gradient (lighter at the top, darker at the bottom — a top-lit
+sheen) and (2) a thin, translucent light rim stroke around the rounded
+shape, both over an otherwise-opaque near-black fill. Tuned once
+(`GRADIENT_TOP_LIFT` 22 → 38, rim alpha 40 → 70) after an offscreen
+render looked too subtle to read as intentional at a glance — the user
+asked for "something visible" for now over subtlety. Real
+backdrop-blur-behind-the-window is a good real-hardware follow-up if the
+faked version doesn't feel convincing enough once seen over real desktop
+content.
+
+**Verification.** This sandbox does have a working PySide6 install
+under `QT_QPA_PLATFORM=offscreen` (unlike some earlier sessions this
+file references — worth re-checking this per-session rather than
+assuming) — so Part A was verified for real, not just by code review:
+constructed the widget offscreen, grabbed its actual painted pixels for
+both `IslandState.COLLAPSED` and `IslandState.EXPANDED`, and asserted:
+correct pixel size for each state, horizontal centering and
+bottom-margin anchoring against the (offscreen) primary screen's
+geometry, fully transparent corners (confirming the rounded-rect clip
+actually clips rather than leaving square corners under translucency),
+and an opaque near-black center matching the chosen color. Composited
+the grabbed pixels over a synthetic background and visually reviewed
+both states at 2x/3x scale before and after the gradient/rim tuning
+above. **Not verified:** real window compositing/transparency over
+actual desktop content, real-monitor DPI/scaling behavior, and whether
+`Qt.WindowType.Tool` avoids taskbar/alt-tab presence the same way on
+real Windows as it does for the existing Aura overlay — all real-
+hardware-only concerns, same category as this project's other
+frameless-overlay work.
+
+**Not done in Part A (by design):** no global hotkey, no wake-word
+hookup, no working settings button (the gear glyph in the expanded
+state is decorative only), and `app/main_window.py` has not been
+touched — Parts B–D per the user's confirmed scoping.

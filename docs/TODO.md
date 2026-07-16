@@ -310,6 +310,32 @@ parts breakdown.
       confirm the dwell feels right and click-through still holds with the
       polling timer running.
 
+## Milestone 10 — Dynamic Island
+
+- [x] **Part A — static island widget (2026-07-16).**
+      `app/dynamic_island.py`'s `DynamicIslandWidget`: frameless,
+      translucent, always-on-top, anchored bottom-center of the primary
+      screen. Two states (`IslandState.COLLAPSED`/`EXPANDED`) with a
+      rounded-rect shape (full-pill radius when collapsed, fixed 28px
+      radius when expanded), near-black (`RGB(0x1A,0x1A,0x1A)`) fill
+      with a top-lit gradient + light rim stroke faking a frosted-glass
+      look (real backdrop blur not attempted — see `docs/DECISIONS.md`),
+      and a `QVariantAnimation`-driven geometry transition between
+      states. Expanded state also paints placeholder title/status text
+      and a decorative (non-functional) settings gear glyph. Verified
+      offscreen: correct pixel size per state, correct screen anchoring,
+      transparent corners (rounding actually clips), opaque near-black
+      center, visually reviewed at 2x/3x zoom. Not verified: real
+      compositing/transparency, real-monitor DPI scaling, taskbar/
+      alt-tab behavior of `Qt.WindowType.Tool` on real Windows. Not
+      wired into `main.py` yet — no hotkey, no wake-word hookup, no
+      working settings button, `app/main_window.py` untouched. See
+      `docs/DECISIONS.md` for the "why a new module, not an
+      `AuraRenderer`" reasoning.
+- [ ] Part B — global hotkey + wake-word activation triggers.
+- [ ] Part C — real (if minimal) settings surface behind the gear icon.
+- [ ] Part D — retire `app/main_window.py`.
+
 ## Loose ends / small items
 
 - [ ] **Vision config defaults are stale again (found 2026-07-16, not yet
