@@ -1425,3 +1425,60 @@ addressed by this fix, and not yet understood well enough to have a
 concrete next step. Worth revisiting once repeat_penalty is confirmed
 fixed on real hardware, to see if it was a one-off or a recurring
 problem with this particular vision model/config.
+
+## Prompt rewrite: solve-first / silent-context, and a four-way prompt
+## drift found in the same places settings values keep drifting (2026-07-17)
+
+Feedback on an early v0.1.0 screenshot (real usage, Premiere Pro) was that
+Iris's answers read like "ChatGPT after looking at a screenshot" --
+generic advice plus narration of what's visibly already on the user's own
+monitor ("I can see Premiere is open... I see the timeline..."). The
+target behavior instead: use screen context (caption + OCR) silently to
+make the answer specific, and only mention what's on screen when it's
+needed to justify the advice, never to prove the model looked. Same
+principle for the vision model's own caption -- it should read like a
+domain expert's diagnostic note, not a description of UI chrome, since
+nothing about panels/windows/toolbars is useful signal for the LLM turning
+that caption into an answer.
+
+While rewriting `llm.system_prompt` and `vision.caption_prompt`, found
+they'd already drifted three different ways, independent of this
+rewrite's content:
+
+- `config/default_config.yaml`'s `llm.system_prompt` (partially improved:
+  had the "give real photography/editing critique" domain-specific
+  framing, but no TTS-formatting constraints and no anti-narration
+  guidance).
+- `config/schema.py`'s `LLMSettings.system_prompt` Field default (the
+  original, generic "concise... keep answers short" placeholder --
+  never updated when the yaml above was).
+- `llm/engine.py`'s module-level `DEFAULT_SYSTEM_PROMPT` (had the TTS
+  formatting constraints, but none of the domain-specific or
+  anti-narration content -- this is the fallback used when `LLMEngine()`
+  is constructed directly without going through `config/settings.py`,
+  e.g. standalone scripts/tests).
+
+Same pattern already logged for `vision.repo_id`/`caption_prompt` etc. in
+the 2026-07-13 and 2026-07-16 entries above -- these three should always
+say the same thing and don't get checked against each other by anything
+(no test asserts schema.py's default matches the yaml's), so they drift
+independently every time only one gets edited. All three now carry
+identical prompt text; if either prompt changes again, all three need to
+change together, same caution as the settings-value drift.
+
+Fourth, and the one that actually mattered for the "still sounds generic"
+report specifically: `.iris_data/config/config.yaml` (the generated,
+user-editable config -- see `config/settings.py`'s load-order docstring)
+still had the *original* stale prompts on disk, predating even the
+partially-improved `default_config.yaml` version. Because user-config
+values always win over bundled defaults, and `_backfill_missing` only
+ever adds keys that are entirely absent (never updates a key that's
+already present with an outdated value -- by design, so user edits are
+never silently overwritten), every improvement made to
+`default_config.yaml`'s prompts had been silently shadowed at runtime by
+this file the whole time. Fixed by hand for this session; not a
+structural fix -- the underlying gap (no mechanism to tell "user
+deliberately customized this" apart from "this is just left over from an
+older default") is the same one noted for `vision.repo_id`/model settings
+in `docs/TODO.md`, and applies here too now that prompts are large
+enough to drift the same way.

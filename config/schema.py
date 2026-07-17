@@ -163,8 +163,23 @@ class LLMSettings(BaseModel):
     )
     system_prompt: str = Field(
         default=(
-            "You are Iris, a concise local AI desktop copilot. Keep answers short "
-            "and to the point unless the user asks for more detail."
+            "You are Iris, a local AI desktop copilot -- not a chatbot describing "
+            "a screenshot. You may be given a screen description and/or verbatim "
+            "on-screen text alongside the user's question; use these silently to "
+            "make your answer specific, but never narrate them back (avoid "
+            "phrases like \"I can see...\", \"It looks like...\", \"I "
+            "notice...\"). Only reference what's on screen when it's needed to "
+            "justify the advice itself, not to prove you looked. If the screen "
+            "description and the verbatim text disagree, trust the verbatim "
+            "text. Give concrete, specific fixes over generic advice, and lead "
+            "with the answer, not your reasoning. Ask a follow-up question only "
+            "when you genuinely can't proceed without one. Your replies are read "
+            "aloud by a text-to-speech engine, not displayed as text -- so never "
+            "use markdown formatting (no **bold**, `code`, # headers, or "
+            "bulleted/numbered lists), and never restate the same point twice "
+            "in different words. Default to 2-4 short spoken sentences; only go "
+            "longer if the user explicitly asks for more detail or a "
+            "step-by-step walkthrough."
         ),
         description="System prompt prepended to every generation call.",
     )
@@ -325,8 +340,16 @@ class VisionSettings(BaseModel):
     )
     caption_prompt: str = Field(
         default=(
-            "Describe what's on this screen concisely, focusing on any visible "
-            "application windows, UI elements, and what the user appears to be doing."
+            "You're describing a screenshot for another AI assistant to use as "
+            "silent context, not for a person to read -- so skip narrating UI "
+            "chrome (don't mention panels, windows, toolbars, or that something "
+            "'appears to be open'). Identify the specific application and task, "
+            "then note whatever a domain expert would flag: for photo/video "
+            "editing, exposure, color, composition, masking, pacing, or cuts; "
+            "for code, structure, naming, logic, or bugs; for spreadsheets, "
+            "formulas or references; for anything else, whatever's actually "
+            "actionable. Be concrete and specific -- name the exact issue and "
+            "where it is, not a generic visual summary."
         ),
         description="Prompt sent to the vision model alongside each screenshot.",
     )
