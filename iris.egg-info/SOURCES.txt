@@ -40,6 +40,7 @@ speech/__init__.py
 speech/listening_session.py
 speech/transcriber.py
 tests/test_llm_engine.py
+tests/test_main_vision_resize.py
 tests/test_memory_store.py
 tests/test_ocr.py
 tests/test_settings.py

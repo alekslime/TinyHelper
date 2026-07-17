@@ -77,6 +77,20 @@ except ImportError:
 # Screen capture is additionally gated behind `settings.vision.enabled`
 # (opt-in, off by default) even when the extra IS installed — see
 # `config/schema.py:VisionSettings`.
+# PIL/Pillow is only needed here for `_resize_for_vision` (a pure
+# function used by `_build_prompt_with_screen_context` below). Kept as
+# its own import guard, separate from the vision block further down --
+# Pillow is a much lighter dependency than llama-cpp-python/mss/etc., and
+# there's no reason a failure to import one of *those* should also zero
+# out `Image` and make this file harder to unit-test in isolation.
+try:
+    from PIL import Image
+
+    _PIL_AVAILABLE = True
+except ImportError:
+    Image = None  # type: ignore[assignment,misc]
+    _PIL_AVAILABLE = False
+
 try:
     from vision.capture import ScreenCapture
     from vision.model import VisionModel
@@ -139,6 +153,45 @@ def _percent_box_to_pixels(
     w = round(w_pct / 100 * img_w)
     h = round(h_pct / 100 * img_h)
     return x, y, w, h
+
+
+def _resize_for_vision(image: Image.Image, max_dimension: int | None) -> Image.Image:
+    """Downscale `image` so its longer side is at most `max_dimension`
+    pixels, preserving aspect ratio. `max_dimension=None` or an image
+    already within bounds returns `image` unchanged (same object, not a
+    copy — cheap, and fine since PIL images from `ScreenCapture.capture()`
+    are only ever read from here on, never mutated in place).
+
+    Milestone 11, Part A (2026-07-17): added after real hardware showed a
+    full 1920x1080 capture costs ~234s in `vision_model.describe()`/
+    `.locate()` — MiniCPM-V's own adaptive slicing computes an 8-slice
+    grid from a full-res image, and each slice's CLIP encoding is
+    CPU-bound regardless of `vision.n_gpu_layers` (see that field's
+    docstring in `config/schema.py`). Shrinking the input directly
+    shrinks the slice grid MiniCPM-V computes from it.
+
+    Only the copy handed to the vision model should ever go through this
+    — `_build_prompt_with_screen_context` keeps the OCR reader on the
+    original, full-resolution capture (downscaling before Tesseract would
+    degrade verbatim text reading, which is the opposite of what
+    `max_image_dimension` is for), and passes the *same* resized instance
+    to both `describe()`/`locate()` and — critically —
+    `_percent_box_to_pixels`'s `image_size` argument, since `locate()`'s
+    percentages are relative to whatever image it was actually given.
+
+    Pure/no side effects, like `_percent_box_to_pixels` above — same
+    "one piece of pure arithmetic" carve-out from this file's "no feature
+    logic belongs here" rule, kept unit-testable on its own.
+    """
+    if max_dimension is None:
+        return image
+    width, height = image.size
+    longest_side = max(width, height)
+    if longest_side <= max_dimension:
+        return image
+    scale = max_dimension / longest_side
+    new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    return image.resize(new_size, Image.Resampling.LANCZOS)
 
 
 def main() -> int:
@@ -409,6 +462,12 @@ def main() -> int:
             logger.exception("Screen capture failed — continuing without screen context.")
             return text
 
+        # Milestone 11, Part A: vision_image is what actually goes to
+        # the vision model (describe()/locate()) — image itself stays
+        # full-resolution for OCR below. See _resize_for_vision's
+        # docstring for why these must NOT be the same downscaled copy.
+        vision_image = _resize_for_vision(image, settings.vision.max_image_dimension)
+
         # Milestone 7, Part B.3: attempt to find and flash a target box
         # before captioning/OCR. found=False and a genuine parse failure
         # are treated identically here, per the Milestone 7 design
@@ -417,14 +476,14 @@ def main() -> int:
         # specifically asked to be shown something.
         if should_locate:
             try:
-                location = vision_model.locate(image, text)
+                location = vision_model.locate(vision_image, text)
             except Exception:
                 logger.exception("Vision locate() failed — continuing without a target box.")
                 location = None
 
             if location is not None and location.found:
                 px, py, pw, ph = _percent_box_to_pixels(
-                    location, image.size, vision_monitor_left, vision_monitor_top
+                    location, vision_image.size, vision_monitor_left, vision_monitor_top
                 )
                 logger.info(
                     "locate() found %r at screen pixels (%d, %d, %d, %d)",
@@ -454,7 +513,7 @@ def main() -> int:
         if vision_model is not None:
             try:
                 caption = vision_model.describe(
-                    image,
+                    vision_image,
                     prompt=settings.vision.caption_prompt,
                     max_tokens=settings.vision.max_tokens,
                 )
@@ -464,6 +523,9 @@ def main() -> int:
         ocr_text = ""
         if ocr_reader is not None:
             try:
+                # Deliberately `image`, not `vision_image` — OCR wants
+                # full resolution for verbatim text accuracy; see
+                # _resize_for_vision's docstring.
                 ocr_text = ocr_reader.read(image)
             except Exception:
                 logger.exception("OCR failed — continuing without verbatim on-screen text.")

@@ -55,13 +55,14 @@ vision:
   monitor_index: 0  # 0 = all monitors combined; 1, 2, ... = a single monitor
   save_debug_screenshots: false  # developer aid only -- screenshots are discarded after use by default
   debug_screenshot_dir: null  # null = <app data dir>/data/debug_screenshots
-  repo_id: moondream/moondream2-gguf  # HF repo for GGUF text-model + mmproj weights, if local_*_path is unset
-  model_filename: moondream2-text-model-f16.gguf
-  mmproj_filename: moondream2-mmproj-f16.gguf
+  repo_id: openbmb/MiniCPM-V-2_6-gguf  # HF repo for GGUF text-model + mmproj weights, if local_*_path is unset
+  model_filename: ggml-model-Q4_K_M.gguf
+  mmproj_filename: mmproj-model-f16.gguf
   local_model_path: null  # set to bypass the Hub download and load a local GGUF text-model file
   local_mmproj_path: null  # required alongside local_model_path
   n_ctx: 2048  # context window for the vision model (image embeddings consume context)
-  n_gpu_layers: 0  # GPU layers to offload for the vision model's text half. -1 = all
+  n_gpu_layers: 0  # offloads the vision model's TEXT half only. Confirmed on real hardware this does NOT speed up image encoding (CLIP/mmproj path is CPU-bound regardless -- known llama-cpp-python limitation, see config/schema.py)
+  max_image_dimension: 1280  # downscale captures to at most this many px on the long side before sending to the vision model; null = full resolution. See config/schema.py for why.
   max_tokens: 256  # max tokens generated per screenshot description
   caption_prompt: "Describe what's on this screen concisely, focusing on any visible application windows, UI elements, and what the user appears to be doing."
   trigger_keywords: [screen, see, look, this, here]  # vision only runs if the query contains one of these (case-insensitive); [] = always run

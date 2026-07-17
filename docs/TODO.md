@@ -571,6 +571,47 @@ parts breakdown.
 - [ ] Milestone 11, Part D — sync Aura glow to real TTS playback
       amplitude instead of a flat on/off SPEAKING state. Not started.
 
+- [x] **Milestone 11, Part A (continued): vision latency reduction
+      (2026-07-17, same session).** Root-caused via real hardware data:
+      `vision.n_gpu_layers: -1` was already set the whole session and
+      vision was *still* 234s — confirmed this setting only offloads
+      MiniCPM-V's text half, not the CLIP/mmproj image encoder, which is
+      a known llama-cpp-python limitation
+      (github.com/abetlen/llama-cpp-python/issues/1953), not a
+      misconfiguration on this machine. Added `main.py`'s
+      `_resize_for_vision()` + `config/schema.py`'s
+      `vision.max_image_dimension` (default 1280px, long side) instead —
+      downscales the capture before it reaches the vision model, which
+      directly shrinks the slice grid MiniCPM-V computes from it. OCR
+      deliberately still runs against the original, full-resolution
+      capture (see `_resize_for_vision`'s docstring) — only the caption/
+      locate() path is affected. **Not yet validated on real hardware**
+      — next session should re-run the same "what's on my screen"
+      debug-text query and compare the new `vision=` number against the
+      baseline 234.06s already on record above.
+- [x] **Found and fixed while doing the above: `VisionSettings`'
+      schema defaults (`repo_id`/`model_filename`/`mmproj_filename`)
+      were still moondream2** — the model already tried and reverted
+      2026-07-13 for garbling on-screen text (`vision/model.py`'s own
+      `DEFAULT_REPO_ID` etc. were already correctly MiniCPM-V-2.6, but
+      `config/schema.py`'s `Field(default=...)` values and the bundled
+      `config/default_config.yaml` template had never been updated to
+      match). Only reason this hadn't caused visible problems is that
+      the real dev/test machine's *live* `%APPDATA%\Iris\config\
+      config.yaml` already had the correct values saved from earlier —
+      but a genuinely fresh install would have silently loaded the
+      rejected model. Fixed both files.
+- [x] **Also found and fixed while writing real tests for the above:**
+      `main.py`'s `Image` (PIL) import was bundled into the same
+      try/except as `VisionModel`/`OCRReader`, so a failure to import
+      the much heavier `llama-cpp-python` (unrelated to Pillow) silently
+      zeroed out `Image` too. Gave `PIL.Image` its own import guard.
+      Caught by `tests/test_main_vision_resize.py` actually failing in
+      an environment with Pillow installed but not llama-cpp-python —
+      no behavior change on a machine with the full `vision` extra
+      installed (which is every real deployment target), but makes
+      `_resize_for_vision` testable independent of the heavier stack.
+
 ## Known issues
 
 - None currently open beyond the real-hardware verification gaps noted

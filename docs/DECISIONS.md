@@ -1291,3 +1291,55 @@ frameless-overlay work.
 hookup, no working settings button (the gear glyph in the expanded
 state is decorative only), and `app/main_window.py` has not been
 touched — Parts B–D per the user's confirmed scoping.
+
+**Milestone 11, Part A — real hardware run (2026-07-17, Windows/RTX
+3070 Ti) — instrumentation found a real bottleneck, not a bug in the
+instrumentation.** `TurnTimer` logged its first real numbers: a plain
+"hi" query (no vision) came back in `llm=7.50s tts=2.77s total=10.29s`;
+a "what's on my screen right now" query (vision triggered) came back in
+`stt=0ms vision=234.06s llm=44.44s tts=23.36s total=301.91s` — five
+minutes, vision alone accounting for ~78% of it. Confirmed
+`vision.n_gpu_layers` had already been `-1` for the whole session
+(user-verified, not assumed) — ruling out "just wasn't offloaded" as
+the explanation. Root cause: `n_gpu_layers` only offloads MiniCPM-V's
+text-decoder half; the CLIP/mmproj image encoder — the actual work
+shown in the console log as repeated `clip_image_batch_encode`/"image
+slice encoded in ~18000ms" lines, one per slice of an 8-slice (4x2)
+grid MiniCPM-V computed from the full 1920x1080 capture — has no
+reliable GPU path through llama-cpp-python's chat-handler API
+regardless of that setting; this is a known upstream limitation
+(github.com/abetlen/llama-cpp-python/issues/1953), not something wrong
+with this machine or this code's config plumbing. Also notable: this
+module's own docstring estimate was "~40s+ per screenshot" on a weaker
+laptop target -- the real number, on better hardware, was ~6x that
+estimate, which is itself worth remembering next time a "should be
+roughly X" estimate gets written down without a real run to check it
+against.
+
+Response: added `main.py`'s `_resize_for_vision()` and
+`config/schema.py`'s `vision.max_image_dimension` (default 1280px on
+the long side) -- downscaling the capture before the vision model sees
+it directly shrinks the slice grid it computes, which is the actual
+lever available given the GPU-offload dead end above. Deliberately
+does NOT touch Tesseract OCR's input (still gets the original
+full-resolution capture) -- only `describe()`/`locate()`. Chose 1280px
+as a middle ground based on reasoning, not measurement: moondream2's
+2026-07-13 rejection was a *single* 378x378 tile, an 8x smaller total
+pixel budget than 1280px's multi-tile adaptive slicing, so the same
+"unreadable mush" failure mode is expected to be far less likely --
+but this specific number is unvalidated on real hardware as of this
+entry. Next session should re-run the identical "what's on my screen
+right now" debug-text query used for the 234.06s baseline above and
+compare.
+
+Also found and fixed in passing, while investigating the above:
+`config/schema.py`'s `VisionSettings.repo_id`/`model_filename`/
+`mmproj_filename` field defaults, and the matching lines in the
+bundled `config/default_config.yaml` template, were still moondream2 --
+`vision/model.py`'s own `DEFAULT_REPO_ID` constant had already been
+correctly MiniCPM-V-2.6 since the 2026-07-13 revert, but the pydantic
+schema defaults and the yaml template were never updated to match. Not
+visible on the real dev machine only because its *live*
+`%APPDATA%\Iris\config\config.yaml` already had the correct values
+saved from earlier manual edits -- a genuinely fresh install would have
+silently loaded the already-rejected model. Fixed both.

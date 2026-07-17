@@ -207,15 +207,25 @@ class VisionSettings(BaseModel):
         ),
     )
     repo_id: str = Field(
-        default="moondream/moondream2-gguf",
-        description="Hugging Face repo to pull moondream2 GGUF files from, if local_model_path is unset.",
+        default="openbmb/MiniCPM-V-2_6-gguf",
+        description=(
+            "Hugging Face repo to pull the vision model's GGUF files from, "
+            "if local_model_path is unset. NOTE: this was stale at "
+            "moondream2 until 2026-07-17 -- moondream2 was tried and "
+            "reverted (see docs/DECISIONS.md, 2026-07-13 entry: its "
+            "single 378x378-tile encoder garbled on-screen text) and "
+            "vision/model.py's own DEFAULT_REPO_ID was already correctly "
+            "MiniCPM-V-2.6, but this schema default hadn't been updated "
+            "to match -- meaning a fresh install with no existing "
+            "config.yaml would have silently loaded the rejected model."
+        ),
     )
     model_filename: str = Field(
-        default="moondream2-text-model-f16.gguf",
+        default="ggml-model-Q4_K_M.gguf",
         description="GGUF text-model filename within repo_id.",
     )
     mmproj_filename: str = Field(
-        default="moondream2-mmproj-f16.gguf",
+        default="mmproj-model-f16.gguf",
         description="GGUF mmproj (vision projector) filename within repo_id.",
     )
     local_model_path: str | None = Field(
@@ -233,7 +243,45 @@ class VisionSettings(BaseModel):
     )
     n_gpu_layers: int = Field(
         default=0,
-        description="GPU layers to offload for the vision model's text half. -1 = all.",
+        description=(
+            "GPU layers to offload for the vision model's text half. -1 = "
+            "all. NOTE (Milestone 11, Part A, 2026-07-17): this does NOT "
+            "control the CLIP/mmproj image encoder -- confirmed on real "
+            "hardware that setting this to -1 alone did not speed up "
+            "vision= latency at all (234s on an RTX 3070 Ti, image "
+            "encoding still fully CPU-bound). llama-cpp-python's "
+            "chat-handler-based multimodal path has a known upstream "
+            "limitation where the image encoder doesn't reliably get GPU "
+            "acceleration regardless of this setting (see "
+            "github.com/abetlen/llama-cpp-python/issues/1953). "
+            "max_image_dimension below is the lever that actually reduces "
+            "vision cost today."
+        ),
+    )
+    max_image_dimension: int | None = Field(
+        default=1280,
+        ge=64,
+        description=(
+            "Downscale the captured screenshot so its longer side is at "
+            "most this many pixels before sending it to the vision model "
+            "-- None disables downscaling (send the full-resolution "
+            "capture). Added Milestone 11, Part A (2026-07-17) after real "
+            "hardware showed a 1920x1080 capture costs ~234s: MiniCPM-V's "
+            "own adaptive slicing computed an 8-slice (4x2) grid from the "
+            "full-resolution image, and each slice's CLIP encoding step "
+            "is CPU-bound (~17-19s) regardless of n_gpu_layers (see that "
+            "field's docstring). Shrinking the input directly shrinks the "
+            "slice grid MiniCPM-V computes, and unlike moondream2's single "
+            "378x378 tile (rejected 2026-07-13 for garbling on-screen "
+            "text), 1280px keeps enough resolution for legibility while "
+            "still cutting real cost -- but this specific number hasn't "
+            "been validated on real hardware yet. Tesseract OCR "
+            "(ocr_enabled below) always runs against the *original*, "
+            "un-downscaled capture, so verbatim on-screen text reading is "
+            "unaffected either way -- only the vision model's scene "
+            "description (and locate(), if enabled) sees the downscaled "
+            "image."
+        ),
     )
     max_tokens: int = Field(
         default=256,

@@ -127,10 +127,21 @@ deliberately: measure first, then optimize/interrupt.
       interrupting still-playing TTS from the previous turn must not
       let that previous turn's delayed "finished" callback mis-log or
       clear the *new* turn's in-progress timer). 12 real tests in
-      `tests/test_timing.py`. **Not yet run on real hardware** — next
-      session should report back actual stage numbers from a live run
-      (that's the whole point: know where time is actually going before
-      Part B/C change anything).
+      `tests/test_timing.py`.
+      **Real hardware run (2026-07-17) found a genuine bottleneck**:
+      screen-context queries cost ~234s, almost entirely CPU-bound
+      MiniCPM-V image-slice encoding that `vision.n_gpu_layers` doesn't
+      actually reach (known llama-cpp-python limitation — see
+      `docs/DECISIONS.md`, 2026-07-17 entry, for the full root-cause).
+      Added `vision.max_image_dimension` (downscale before the vision
+      model sees the capture) as the actual lever, plus fixed two bugs
+      found along the way: `VisionSettings`' schema defaults had
+      regressed to the already-rejected moondream2 model, and
+      `main.py`'s `Image` import was needlessly coupled to the heavier
+      `llama-cpp-python` import succeeding. 8 more real tests in
+      `tests/test_main_vision_resize.py`. **The downscale fix itself is
+      not yet validated on real hardware** — next session should re-run
+      the same query and compare against the 234s baseline.
 - [ ] Part B — Streaming TTS: speak the first sentence while the LLM is
       still generating the rest, instead of waiting for the full
       response.
