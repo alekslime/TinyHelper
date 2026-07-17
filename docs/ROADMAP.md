@@ -139,9 +139,16 @@ deliberately: measure first, then optimize/interrupt.
       regressed to the already-rejected moondream2 model, and
       `main.py`'s `Image` import was needlessly coupled to the heavier
       `llama-cpp-python` import succeeding. 8 more real tests in
-      `tests/test_main_vision_resize.py`. **The downscale fix itself is
-      not yet validated on real hardware** — next session should re-run
-      the same query and compare against the 234s baseline.
+      `tests/test_main_vision_resize.py`.
+      **VALIDATED on real hardware (2026-07-17):** `max_image_dimension:
+      512` (now the default, was 1280) took vision= latency from 234.06s
+      to ~22s reproducibly across two clean test runs — a ~90%
+      reduction — with caption quality that correctly identified real
+      on-screen content, imperfectly (see `docs/DECISIONS.md` for the
+      full three-point data table and caveats). Also found and fixed a
+      real testing-methodology bug along the way: small local LLMs can
+      echo stale conversation history instead of grounding in fresh
+      injected context — see `docs/TODO.md`'s known-issues entry.
 - [ ] Part B — Streaming TTS: speak the first sentence while the LLM is
       still generating the rest, instead of waiting for the full
       response.

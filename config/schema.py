@@ -259,7 +259,7 @@ class VisionSettings(BaseModel):
         ),
     )
     max_image_dimension: int | None = Field(
-        default=1280,
+        default=512,
         ge=64,
         description=(
             "Downscale the captured screenshot so its longer side is at "
@@ -270,17 +270,22 @@ class VisionSettings(BaseModel):
             "own adaptive slicing computed an 8-slice (4x2) grid from the "
             "full-resolution image, and each slice's CLIP encoding step "
             "is CPU-bound (~17-19s) regardless of n_gpu_layers (see that "
-            "field's docstring). Shrinking the input directly shrinks the "
-            "slice grid MiniCPM-V computes, and unlike moondream2's single "
-            "378x378 tile (rejected 2026-07-13 for garbling on-screen "
-            "text), 1280px keeps enough resolution for legibility while "
-            "still cutting real cost -- but this specific number hasn't "
-            "been validated on real hardware yet. Tesseract OCR "
-            "(ocr_enabled below) always runs against the *original*, "
-            "un-downscaled capture, so verbatim on-screen text reading is "
-            "unaffected either way -- only the vision model's scene "
-            "description (and locate(), if enabled) sees the downscaled "
-            "image."
+            "field's docstring). VALIDATED on real hardware (see "
+            "docs/DECISIONS.md, 2026-07-17 entry): 512 cut vision= "
+            "latency from 234s to ~22s (~90% reduction), reproducibly, "
+            "across two clean test runs, with caption quality that "
+            "correctly identified real on-screen content (accurately "
+            "described a Northern Lights wallpaper) though not perfectly "
+            "-- missed some visible detail and added a couple of "
+            "unconfirmed guesses. 1280 was tried first and only bought "
+            "~2.4x (234s -> ~96s per one two-data-point comparison, "
+            "different vision model though, so not fully apples-to-"
+            "apples) -- 512 is the better cost/quality tradeoff found so "
+            "far. Tesseract OCR (ocr_enabled below) always runs against "
+            "the *original*, un-downscaled capture, so verbatim on-screen "
+            "text reading is unaffected either way -- only the vision "
+            "model's scene description (and locate(), if enabled) sees "
+            "the downscaled image."
         ),
     )
     max_tokens: int = Field(

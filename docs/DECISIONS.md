@@ -1343,3 +1343,44 @@ visible on the real dev machine only because its *live*
 `%APPDATA%\Iris\config\config.yaml` already had the correct values
 saved from earlier manual edits -- a genuinely fresh install would have
 silently loaded the already-rejected model. Fixed both.
+
+**Milestone 11, Part A — max_image_dimension validated on real hardware
+(2026-07-17, same session, Windows/RTX 3070 Ti, second machine).** Three
+data points collected testing `vision.max_image_dimension` against the
+234.06s full-resolution baseline (see the entry above):
+
+| max_image_dimension | vision= | Notes |
+|---|---|---|
+| 1280 (default) | 96.63s | Single-tile slicing kicked in (vs. baseline's 8-tile grid), but tile itself was still large (1288x728) |
+| 512 | 22.97s | First run — response text was contaminated by stale conversation history (see below), caption itself not fully verified against ground truth |
+| 512 (repeat, clean) | 22.27s | `conversations.db` cleared first — reproducible result, and this time the response correctly described the real, current screen (a Northern Lights desktop wallpaper) |
+
+**Real methodology bug found and fixed mid-investigation, worth
+recording since it nearly invalidated every comparison above it:**
+`conversations.db` persists across every `python main.py` restart (by
+design — see Milestone 4), which is correct behavior for normal use but
+actively misleading when rapidly re-running the same debug-text query
+across back-to-back test sessions. The small `Qwen2.5-0.5B` LLM used on
+this machine is weak enough at instruction-following that it repeatedly
+echoed a much older cached response ("images, text, and a video related
+to travel, nature, and technology" — originally hallucinated in the very
+first test of this session, before vision was even installed) instead of
+grounding in the freshly-injected `[Screen description: ...]` block, even
+though `vision_model.describe()` itself *was* being called fresh and
+correctly on every single turn (confirmed via the `Vision model
+generated N chars: ...` DEBUG log line, which always reflected the
+real, current screen). Fix for testing purposes:
+`Remove-Item $env:APPDATA\Iris\data\conversations.db` between test
+sessions. This is a real, separate quality issue independent of vision
+speed/accuracy -- a low-parameter local LLM unreliably prioritizing
+conversation history over fresh injected context -- logged as a known
+issue in `docs/TODO.md` for future attention, not fixed here.
+
+**Conclusion: `max_image_dimension: 512` is a validated, working fix**
+for the vision latency problem — ~90% latency reduction (234s -> ~22s)
+with caption quality that's real but imperfect (correctly identified
+actual on-screen content in the clean re-test, at the cost of missing
+some visible detail and adding a couple of unconfirmed guesses). Good
+enough to ship as the new default without needing the riskier
+GPU-offload investigation that was the fallback plan if downscaling
+alone didn't work.

@@ -614,5 +614,29 @@ parts breakdown.
 
 ## Known issues
 
+- **Small local LLM echoes stale conversation history instead of
+  grounding in fresh injected context (found 2026-07-17, during
+  Milestone 11, Part A's real-hardware `max_image_dimension`
+  validation).** `Qwen2.5-0.5B-Instruct` (the default `llm.repo_id`) is
+  weak enough at instruction-following that, when re-running the same
+  debug-text screen-context query back-to-back within one session, it
+  repeatedly echoed a much older cached response from earlier in
+  `conversations.db` instead of grounding in the freshly-injected
+  `[Screen description: ...]` block for the *current* turn — even
+  though `vision_model.describe()` itself was being called correctly
+  fresh on every turn (confirmed via the `Vision model generated N
+  chars: ...` DEBUG log line). This nearly invalidated the
+  `max_image_dimension` comparison table until caught; see
+  `docs/DECISIONS.md`'s 2026-07-17 "validated on real hardware" entry
+  for the full account and the `Remove-Item
+  $env:APPDATA\Iris\data\conversations.db`-between-test-runs workaround
+  used to get a clean measurement. This is a real conversation-memory
+  quality issue independent of vision speed/accuracy — Milestone 9's
+  `memory.context_turns` retrieval is working exactly as designed, the
+  problem is the small model not reliably prioritizing fresh context
+  over history when the two conflict. Not fixed here; candidate fixes
+  for a future session include a stronger default model, or restructuring
+  the prompt so fresh screen context is harder for a weak model to
+  ignore (e.g. repeating it after the history block, not just before).
 - None currently open beyond the real-hardware verification gaps noted
   above. See `HANDOFF.md` "Known issues" for details.

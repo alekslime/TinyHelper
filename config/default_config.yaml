@@ -62,7 +62,7 @@ vision:
   local_mmproj_path: null  # required alongside local_model_path
   n_ctx: 2048  # context window for the vision model (image embeddings consume context)
   n_gpu_layers: 0  # offloads the vision model's TEXT half only. Confirmed on real hardware this does NOT speed up image encoding (CLIP/mmproj path is CPU-bound regardless -- known llama-cpp-python limitation, see config/schema.py)
-  max_image_dimension: 1280  # downscale captures to at most this many px on the long side before sending to the vision model; null = full resolution. See config/schema.py for why.
+  max_image_dimension: 512  # downscale captures to at most this many px on the long side before sending to the vision model; null = full resolution. VALIDATED 2026-07-17: 234s -> ~22s (~90% reduction), reproducible. See config/schema.py / docs/DECISIONS.md.
   max_tokens: 256  # max tokens generated per screenshot description
   caption_prompt: "Describe what's on this screen concisely, focusing on any visible application windows, UI elements, and what the user appears to be doing."
   trigger_keywords: [screen, see, look, this, here]  # vision only runs if the query contains one of these (case-insensitive); [] = always run
