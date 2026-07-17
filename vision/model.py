@@ -70,7 +70,13 @@ DEFAULT_N_CTX = 4096
 # main LLM's VRAM usage, there usually isn't spare VRAM for this model
 # too on a 4GB card anyway -- see docs/DECISIONS.md before changing.
 DEFAULT_N_GPU_LAYERS = 0
-DEFAULT_MAX_TOKENS = 256
+# Lowered from 256 -- paired with the tightened DEFAULT_SYSTEM_PROMPT/
+# DEFAULT_CAPTION_PROMPT below (~400 char target), 256 tokens left enough
+# headroom for the model to fall back into a repetitive multi-point
+# checklist once it ran out of new things to say. ~150 tokens is roughly
+# 400-500 chars of English, matching the prompt's stated budget while still
+# leaving room for the "one sentence + up to two observations" shape.
+DEFAULT_MAX_TOKENS = 150
 # Added 2026-07-17 after a real-hardware failure: describe() got stuck in
 # a ~900-token exact-repeat loop ("[0:00] (0:00) [0:00] ..."), observed
 # on ggml-org/Qwen2.5-VL-3B-Instruct-GGUF at temperature=0.1. Neither
@@ -92,15 +98,22 @@ DEFAULT_SYSTEM_PROMPT = (
     "so a second model can give them real help. Identify the active "
     "application and the specific task in progress (e.g. editing a photo, "
     "reviewing code, cutting a video), and note anything domain-relevant to "
-    "critique or improve, not just what is visually present."
+    "critique or improve, not just what is visually present. Keep the whole "
+    "response under 400 characters: one sentence identifying the app/task, "
+    "plus at most two concrete observations. Never restate the same point "
+    "twice in different words, never write a numbered or bulleted checklist, "
+    "and never use markdown formatting -- this output is read aloud."
 )
 DEFAULT_CAPTION_PROMPT = (
-    "Identify the application and what the user is working on. If it's a "
-    "photo (e.g. Lightroom/Photoshop), note exposure, color, composition, or "
-    "masking issues worth mentioning. If it's code, note structure, naming, "
-    "or logic worth flagging. If it's video editing, note pacing or cuts. "
-    "Be concise and concrete -- a domain expert's quick read, not a visual "
-    "description of the UI chrome."
+    "Identify the application and what the user is working on, in one "
+    "sentence. If it's a photo (e.g. Lightroom/Photoshop), note the single "
+    "most important exposure, color, composition, or masking issue. If it's "
+    "code, note the single most important structure, naming, or logic issue. "
+    "If it's video editing, note the single most important pacing or cut "
+    "issue. Give at most one more observation beyond that if genuinely "
+    "useful -- do not pad with a generic checklist. Be concise and concrete: "
+    "a domain expert's quick read, not a visual description of the UI "
+    "chrome, and not a restated list of best practices."
 )
 
 # --- Milestone 7: locate() -- grammar-constrained single-bounding-box output ---

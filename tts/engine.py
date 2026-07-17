@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import subprocess
 import sys
 import wave
@@ -59,6 +60,43 @@ DEFAULT_VOICE = "en_US-lessac-medium"
 DEFAULT_LENGTH_SCALE = 1.0
 DEFAULT_NOISE_SCALE = 0.667
 DEFAULT_NOISE_W_SCALE = 0.8
+
+
+def strip_markdown_for_tts(text: str) -> str:
+    """Strip common Markdown formatting out of `text` before it's spoken.
+
+    `llm/engine.py`'s system prompt now asks the LLM not to produce
+    markdown at all (see its `DEFAULT_SYSTEM_PROMPT`), but that's a
+    request, not a guarantee -- models still occasionally emit `**bold**`,
+    code fences, headers, or bullet markers. Piper reads all of that
+    literally (asterisks get spoken as "asterisk", fenced code blocks get
+    read character-by-character), so `speak()` runs input through this
+    first. Callers that want the original text for on-screen display
+    (e.g. a chat log) should keep the untouched string around separately
+    -- this function is TTS-only sanitization, not a general-purpose
+    markdown-to-plaintext converter.
+    """
+    # Fenced code blocks are dropped entirely rather than read aloud --
+    # there's no sensible spoken rendering of a multi-line code block.
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    # Inline code keeps its contents, just drops the backticks.
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    # Bold / italic emphasis markers (order matters: *** before ** before *).
+    text = re.sub(r"\*\*\*(.*?)\*\*\*", r"\1", text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.*?)\*", r"\1", text)
+    text = re.sub(r"__(.*?)__", r"\1", text)
+    text = re.sub(r"_(.*?)_", r"\1", text)
+    # ATX-style headers ("# Heading", "## Heading", ...).
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)
+    # Bullet and numbered list markers -- keep the item text, drop the marker.
+    text = re.sub(r"^[ \t]*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^[ \t]*\d+\.\s+", "", text, flags=re.MULTILINE)
+    # Collapse whatever whitespace stripping the above left behind so
+    # Piper doesn't pause oddly on blank lines/runs of spaces.
+    text = re.sub(r"\n{2,}", ". ", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
 
 
 class TTSEngine:
@@ -185,11 +223,20 @@ class TTSEngine:
 
         Empty/whitespace-only input is a silent no-op, same convention as
         `LLMEngine.generate()`.
+
+        `text` is run through `strip_markdown_for_tts()` first -- callers
+        should pass the LLM's raw response here and keep their own copy
+        of the untouched text for anything shown on screen; only the
+        audio path needs the sanitized version.
         """
         if not text.strip():
             return
 
-        wav_bytes = self.synthesize_wav_bytes(text)
+        speech_text = strip_markdown_for_tts(text)
+        if not speech_text:
+            return
+
+        wav_bytes = self.synthesize_wav_bytes(speech_text)
         with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
             sample_rate = wav_file.getframerate()
             n_channels = wav_file.getnchannels()

@@ -231,3 +231,79 @@ def test_synthesize_wav_bytes_returns_valid_wav(fake_piper_and_sounddevice, tmp_
     with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
         assert wav_file.getframerate() == 22050
         assert wav_file.getnchannels() == 1
+
+
+# --- strip_markdown_for_tts() ---
+#
+# Regression coverage for the 2026-07-17 fix: Piper was reading the LLM's
+# raw markdown aloud verbatim (literal "asterisk asterisk", fenced code
+# blocks read character-by-character, "**Verbatim Text on Screen:**"
+# spoken as-is), because nothing stripped formatting before synthesis.
+
+
+def test_strip_markdown_removes_bold_and_italic() -> None:
+    engine_module = _import_engine()
+
+    assert engine_module.strip_markdown_for_tts("**bold** and *italic* text") == (
+        "bold and italic text"
+    )
+    assert engine_module.strip_markdown_for_tts("__bold__ and _italic_ text") == (
+        "bold and italic text"
+    )
+    assert engine_module.strip_markdown_for_tts("***both***") == "both"
+
+
+def test_strip_markdown_removes_inline_code_and_fenced_blocks() -> None:
+    engine_module = _import_engine()
+
+    assert engine_module.strip_markdown_for_tts("run `pytest` now") == "run pytest now"
+
+    fenced = "before\n```python\nprint('hi')\n```\nafter"
+    stripped = engine_module.strip_markdown_for_tts(fenced)
+    assert "```" not in stripped
+    assert "print(" not in stripped
+    assert "before" in stripped
+    assert "after" in stripped
+
+
+def test_strip_markdown_removes_headers_and_list_markers() -> None:
+    engine_module = _import_engine()
+
+    stripped = engine_module.strip_markdown_for_tts(
+        "**Verbatim Text on Screen:**\n- first item\n- second item\n1. numbered"
+    )
+    assert "**" not in stripped
+    assert "#" not in stripped
+    assert "- " not in stripped
+    assert "1." not in stripped
+    assert "first item" in stripped
+    assert "second item" in stripped
+    assert "numbered" in stripped
+
+
+def test_strip_markdown_leaves_plain_text_unchanged() -> None:
+    engine_module = _import_engine()
+
+    plain = "This is just a normal sentence with no formatting."
+    assert engine_module.strip_markdown_for_tts(plain) == plain
+
+
+def test_speak_strips_markdown_before_synthesizing(
+    fake_piper_and_sounddevice, tmp_path
+) -> None:
+    """`speak()` should hand Piper the sanitized text, not the raw
+    markdown -- this is what actually keeps Piper from reading
+    "asterisk" and code fences aloud, not just the standalone stripper
+    function existing.
+    """
+    engine_module = _import_engine()
+    fake_piper, _fake_sd = fake_piper_and_sounddevice
+    engine, fake_voice = _make_engine_with_fake_voice(engine_module, fake_piper, tmp_path)
+
+    engine.speak("**Verbatim Text on Screen:** `x = 1`")
+
+    synthesized_text = fake_voice.synthesize_wav.call_args[0][0]
+    assert "**" not in synthesized_text
+    assert "`" not in synthesized_text
+    assert "Verbatim Text on Screen" in synthesized_text
+    assert "x = 1" in synthesized_text

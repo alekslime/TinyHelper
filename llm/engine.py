@@ -40,8 +40,13 @@ DEFAULT_MAX_TOKENS = 512
 # quality degrades.
 DEFAULT_REPEAT_PENALTY = 1.3
 DEFAULT_SYSTEM_PROMPT = (
-    "You are Iris, a concise local AI desktop copilot. Keep answers short "
-    "and to the point unless the user asks for more detail."
+    "You are Iris, a concise local AI desktop copilot. Your responses are "
+    "read aloud by a text-to-speech engine, not displayed as text -- so "
+    "never use markdown formatting (no **bold**, `code`, # headers, or "
+    "bulleted/numbered lists), and never restate the same point twice in "
+    "different words. Default to 2-4 short spoken sentences; only go longer "
+    "if the user explicitly asks for more detail or a step-by-step "
+    "walkthrough."
 )
 
 # `Llama.from_pretrained()` has to list every file in the repo (to glob-match
