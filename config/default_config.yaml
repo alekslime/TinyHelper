@@ -39,8 +39,8 @@ speech:
   max_duration_seconds: 10.0
 
 llm:
-  repo_id: Qwen/Qwen2.5-7B-Instruct-GGUF  # bumped 2026-07-17: 0.5B was a dev-iteration placeholder (see docs/DECISIONS.md 2026-07-xx) -- real hardware (RTX 3070 Ti, 8GB VRAM) has headroom since vision runs CPU-only (n_gpu_layers: 0 below), and 0.5B was producing confused/garbled synthesis of screen context, not just terse answers
-  filename: qwen2.5-7b-instruct-q4_k_m.gguf  # ~4.7GB, fits comfortably in 8GB VRAM alongside KV cache at n_ctx 4096
+  repo_id: Qwen/Qwen2.5-3B-Instruct-GGUF  # 2026-07-17: 7B's q4_k_m is split across 2 shard files in that repo (qwen2.5-7b-instruct-q4_k_m-0000{1,2}-of-00002.gguf) -- Llama.from_pretrained() only matches a single exact filename, so it can't resolve a sharded quant and fails at load. 3B's q4_k_m is small enough (~1.9GB) that Qwen didn't split it, same single-file shape as vision.repo_id below. Still a real step up from the 0.5B dev placeholder.
+  filename: qwen2.5-3b-instruct-q4_k_m.gguf  # single file, ~1.9GB
   local_model_path: null  # set to a .gguf path to bypass the Hub download entirely
   n_ctx: 4096
   n_gpu_layers: -1  # -1 = offload all layers to GPU
