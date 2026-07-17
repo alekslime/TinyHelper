@@ -476,7 +476,9 @@ def main() -> int:
         # specifically asked to be shown something.
         if should_locate:
             try:
-                location = vision_model.locate(vision_image, text)
+                location = vision_model.locate(
+                    vision_image, text, repeat_penalty=settings.vision.repeat_penalty
+                )
             except Exception:
                 logger.exception("Vision locate() failed — continuing without a target box.")
                 location = None
@@ -516,6 +518,7 @@ def main() -> int:
                     vision_image,
                     prompt=settings.vision.caption_prompt,
                     max_tokens=settings.vision.max_tokens,
+                    repeat_penalty=settings.vision.repeat_penalty,
                 )
             except Exception:
                 logger.exception("Screen captioning failed — continuing without scene description.")
@@ -597,6 +600,7 @@ def main() -> int:
                         prompt,
                         max_tokens=settings.llm.max_tokens,
                         temperature=settings.llm.temperature,
+                        repeat_penalty=settings.llm.repeat_penalty,
                         history=history,
                     )
             else:
@@ -604,6 +608,7 @@ def main() -> int:
                     prompt,
                     max_tokens=settings.llm.max_tokens,
                     temperature=settings.llm.temperature,
+                    repeat_penalty=settings.llm.repeat_penalty,
                     history=history,
                 )
             if response:

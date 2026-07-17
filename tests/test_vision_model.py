@@ -155,3 +155,54 @@ def test_locate_substitutes_target_into_the_prompt() -> None:
         block for block in messages[1]["content"] if block["type"] == "text"
     )
     assert "the print icon" in user_text_block["text"]
+
+
+def test_describe_passes_a_repeat_penalty_by_default() -> None:
+    """Regression test for the 2026-07-17 real-hardware repeat-loop bug
+    (see docs/DECISIONS.md and config/schema.py's VisionSettings.repeat_penalty):
+    describe() must always pass repeat_penalty explicitly rather than
+    silently relying on create_chat_completion's own library default.
+    """
+    model_module = _import_model_module()
+    vm = _build_vision_model(model_module, "A description of the screen.")
+
+    vm.describe(Image.new("RGB", (100, 100)))
+
+    kwargs = vm._model.create_chat_completion.call_args.kwargs
+    assert "repeat_penalty" in kwargs
+    assert kwargs["repeat_penalty"] == model_module.DEFAULT_REPEAT_PENALTY
+
+
+def test_describe_repeat_penalty_is_overridable() -> None:
+    model_module = _import_model_module()
+    vm = _build_vision_model(model_module, "A description of the screen.")
+
+    vm.describe(Image.new("RGB", (100, 100)), repeat_penalty=1.7)
+
+    kwargs = vm._model.create_chat_completion.call_args.kwargs
+    assert kwargs["repeat_penalty"] == 1.7
+
+
+def test_locate_passes_a_repeat_penalty_by_default() -> None:
+    """Same regression coverage as test_describe_passes_a_repeat_penalty_by_default,
+    for locate() -- it had the identical gap before the 2026-07-17 fix."""
+    model_module = _import_model_module()
+    response = json.dumps({"found": False, "label": "", "x": 0, "y": 0, "w": 0, "h": 0})
+    vm = _build_vision_model(model_module, response)
+
+    vm.locate(Image.new("RGB", (100, 100)), target="anything")
+
+    kwargs = vm._model.create_chat_completion.call_args.kwargs
+    assert "repeat_penalty" in kwargs
+    assert kwargs["repeat_penalty"] == model_module.DEFAULT_REPEAT_PENALTY
+
+
+def test_locate_repeat_penalty_is_overridable() -> None:
+    model_module = _import_model_module()
+    response = json.dumps({"found": False, "label": "", "x": 0, "y": 0, "w": 0, "h": 0})
+    vm = _build_vision_model(model_module, response)
+
+    vm.locate(Image.new("RGB", (100, 100)), target="anything", repeat_penalty=1.7)
+
+    kwargs = vm._model.create_chat_completion.call_args.kwargs
+    assert kwargs["repeat_penalty"] == 1.7

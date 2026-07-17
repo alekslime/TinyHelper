@@ -661,49 +661,6 @@ parts breakdown.
   have a concrete fix; worth a dedicated look once the repeat-loop fix
   above is confirmed on real hardware, to see whether it's a one-off or
   recurring with this particular vision model/config.
-- **Still open, now with concrete repro evidence (2026-07-17): vision
-  model fabricates entire scenes rather than misreading real ones.**
-  A query captured monitor_index=1 (confirmed correct — real screenshot
-  was the browser showing this Claude conversation). Tesseract OCR read
-  that capture correctly (extracted real, accurate text: "Finishing zip
-  packaging task", "Free plan - Upgrade", real chunks of the actual
-  chat). But describe()'s caption described an entirely different scene
-  — a terminal window running `cd /home/user` and `ls`, with a bot
-  explaining its own design. Ruled out "wrong monitor confused with
-  VS Code" as the explanation: a second screenshot of the actual VS
-  Code/terminal window shows real content (`python main.py`, TTS/piper
-  logs) that doesn't match the hallucinated description either. So this
-  isn't misattribution between two real screens — the model is
-  inventing plausible-sounding UI content that corresponds to neither.
-  The LLM then built its entire spoken answer on the fabricated caption
-  and ignored the correct OCR text sitting in the same prompt, with
-  nothing telling it which source to trust when they disagree.
-
-  Candidate next steps, none attempted yet:
-  1. **Prompt restructuring** — explicitly tell the LLM (in main.py's
-     prompt-assembly, not vision/model.py) that OCR text is verbatim
-     ground truth and the caption is a lower-confidence summary, so it
-     knows which to prefer on conflict. Cheapest to try, no model
-     changes.
-  2. **Compare against MiniCPM-V-2.6** — this machine's live config has
-     drifted to ggml-org/Qwen2.5-VL-3B-Instruct-GGUF (see the "vision
-     config drift" known issue above), not the documented default.
-     Worth testing whether MiniCPM-V-2.6 (the model the rest of the
-     codebase assumes) hallucinates as badly on the same real screen,
-     since this may be partly a weaker-model problem, not just a
-     prompt problem.
-  3. **Sanity-check caption against OCR programmatically** — e.g. flag
-     or discard a caption if it shares near-zero vocabulary overlap
-     with the OCR text from the same capture, as a cheap "this caption
-     is probably unrelated to what's actually on screen" signal before
-     it ever reaches the LLM.
-  4. **Lower caption_prompt ambition** — the current prompt asks for
-     UI elements, what the user is doing, and tips all at once; a
-     narrower ask (literally just "what app/window is this") may
-     hallucinate less than a request for a full scene narrative.
-  Not evaluated against each other yet — worth trying (1) first since
-  it's a one-line prompt change with no new dependencies or real-
-  hardware model swap required.
 - **Still open: this machine's live `vision.repo_id` doesn't match the
   documented default.** The 2026-07-17 real-hardware session (see
   `docs/DECISIONS.md`) was actually running

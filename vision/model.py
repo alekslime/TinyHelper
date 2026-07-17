@@ -71,10 +71,36 @@ DEFAULT_N_CTX = 4096
 # too on a 4GB card anyway -- see docs/DECISIONS.md before changing.
 DEFAULT_N_GPU_LAYERS = 0
 DEFAULT_MAX_TOKENS = 256
-DEFAULT_SYSTEM_PROMPT = "You are an assistant who perfectly describes images."
+# Added 2026-07-17 after a real-hardware failure: describe() got stuck in
+# a ~900-token exact-repeat loop ("[0:00] (0:00) [0:00] ..."), observed
+# on ggml-org/Qwen2.5-VL-3B-Instruct-GGUF at temperature=0.1. Neither
+# describe() nor locate() had ever passed repeat_penalty explicitly --
+# both relied silently on whichever default create_chat_completion's
+# underlying library version happens to ship, which this incident shows
+# isn't reliably strong enough to break a loop once one starts. Low
+# temperature (see describe()'s docstring/comment below) makes this
+# worse, not better: near-greedy decoding has essentially nothing to
+# pull it out of a low-perplexity attractor like a repeated token pair
+# once one is entered. 1.3 is a commonly effective value for this
+# failure mode without being aggressive enough to noticeably hurt normal
+# (non-looping) caption quality -- not independently benchmarked here,
+# revisit if real usage still shows loops or shows degraded captions.
+DEFAULT_REPEAT_PENALTY = 1.3
+DEFAULT_SYSTEM_PROMPT = (
+    "You are the vision component of Iris, a desktop AI copilot. Your job is "
+    "not to narrate the screen -- it is to notice what the user is working on "
+    "so a second model can give them real help. Identify the active "
+    "application and the specific task in progress (e.g. editing a photo, "
+    "reviewing code, cutting a video), and note anything domain-relevant to "
+    "critique or improve, not just what is visually present."
+)
 DEFAULT_CAPTION_PROMPT = (
-    "Describe what's on this screen concisely, focusing on any visible "
-    "application windows, UI elements, and what the user appears to be doing."
+    "Identify the application and what the user is working on. If it's a "
+    "photo (e.g. Lightroom/Photoshop), note exposure, color, composition, or "
+    "masking issues worth mentioning. If it's code, note structure, naming, "
+    "or logic worth flagging. If it's video editing, note pacing or cuts. "
+    "Be concise and concrete -- a domain expert's quick read, not a visual "
+    "description of the UI chrome."
 )
 
 # --- Milestone 7: locate() -- grammar-constrained single-bounding-box output ---
@@ -234,6 +260,7 @@ class VisionModel:
         image: Image.Image,
         prompt: str = DEFAULT_CAPTION_PROMPT,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        repeat_penalty: float = DEFAULT_REPEAT_PENALTY,
     ) -> str:
         """Describe a single screenshot. Returns "" if generation produces nothing.
 
@@ -258,8 +285,17 @@ class VisionModel:
         # can produce meaningfully different captions -- including
         # confident-sounding hallucinated details -- which makes the
         # output impossible to trust or debug.
+        #
+        # repeat_penalty is passed explicitly (see DEFAULT_REPEAT_PENALTY
+        # above) -- at this low a temperature, an unpenalized or
+        # under-penalized model can get stuck exactly repeating a short
+        # token sequence for the rest of its budget instead of finishing
+        # a real description. Confirmed on real hardware 2026-07-17.
         result = self._model.create_chat_completion(
-            messages=messages, max_tokens=max_tokens, temperature=0.1
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.1,
+            repeat_penalty=repeat_penalty,
         )
         content = result["choices"][0]["message"]["content"]
         text = content.strip() if content else ""
@@ -272,6 +308,7 @@ class VisionModel:
         image: Image.Image,
         target: str,
         max_tokens: int = DEFAULT_LOCATE_MAX_TOKENS,
+        repeat_penalty: float = DEFAULT_REPEAT_PENALTY,
     ) -> VisionLocation | None:
         """Find a single UI element on a screenshot and return its
         bounding box as percentages of the image (0-100 each).
@@ -318,6 +355,7 @@ class VisionModel:
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.1,
+            repeat_penalty=repeat_penalty,
             grammar=self._locate_grammar,
         )
         content = result["choices"][0]["message"]["content"]

@@ -1384,3 +1384,44 @@ some visible detail and adding a couple of unconfirmed guesses). Good
 enough to ship as the new default without needing the riskier
 GPU-offload investigation that was the fallback plan if downscaling
 alone didn't work.
+
+**Milestone 11 follow-up — describe()/locate() repeat-loop bug found and
+fixed (2026-07-17, real hardware).** A third real-hardware query in the
+same `max_image_dimension` validation session (`vision.repo_id` on this
+machine was `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`, not the documented
+MiniCPM-V-2.6 default — a separate, pre-existing live-config drift issue,
+not caused by this fix) produced a caption that first hallucinated an
+entirely wrong scene (a Discord-style chat with a fabricated user
+"mike174" and quoted message, when the real screen was a browser), then
+got stuck exactly repeating the token pair `[0:00] (0:00)` for
+essentially its entire remaining `max_tokens` budget (~900 tokens in the
+raw generation, visible directly in Piper's phoneme log as "zero"
+repeated hundreds of times). Root cause: `VisionModel.describe()` and
+`.locate()` had never passed `repeat_penalty` to `create_chat_completion()`
+explicitly — both silently relied on whatever default the installed
+`llama-cpp-python` version ships. Combined with `temperature=0.1`
+(intentionally near-greedy, per the existing comment in `describe()`,
+to keep captions grounded rather than creative), there was essentially
+nothing pulling generation back out once it entered a low-perplexity
+repeat attractor. Fixed by adding `config/schema.py`'s
+`VisionSettings.repeat_penalty` (default `1.3`, a commonly effective
+value for this failure mode) and threading it explicitly through both
+`describe()`'s and `locate()`'s `create_chat_completion()` calls —
+`main.py`'s two call sites now pass `settings.vision.repeat_penalty`,
+same pattern already used for `max_tokens`/`caption_prompt`. Not
+independently benchmarked against real hardware yet — next session
+should re-run a query that previously looped and confirm it no longer
+does, and spot-check that normal (non-looping) caption quality hasn't
+measurably degraded at the new penalty value. 4 new tests in
+`tests/test_vision_model.py` (default value passed, and override,
+for both methods) confirm the parameter is wired correctly — but these
+mock `create_chat_completion` entirely and cannot confirm the penalty
+value actually prevents a real repeat loop against real model weights;
+that's real-hardware-only verification, not yet done.
+
+The hallucination half of that same incident (fabricated chat content
+instead of the actual browser) is a separate, still-open issue — not
+addressed by this fix, and not yet understood well enough to have a
+concrete next step. Worth revisiting once repeat_penalty is confirmed
+fixed on real hardware, to see if it was a one-off or a recurring
+problem with this particular vision model/config.

@@ -152,6 +152,15 @@ class LLMSettings(BaseModel):
     max_tokens: int = Field(
         default=512, ge=1, description="Maximum tokens to generate per response."
     )
+    repeat_penalty: float = Field(
+        default=1.3,
+        description=(
+            "Passed to create_chat_completion() to break exact-repeat loops "
+            "(seen on Qwen2.5-0.5B-Instruct once the prompt grows large -- "
+            "screen caption + OCR + conversation history). Mirrors "
+            "vision.repeat_penalty's 2026-07-17 fix for the same failure mode."
+        ),
+    )
     system_prompt: str = Field(
         default=(
             "You are Iris, a concise local AI desktop copilot. Keep answers short "
@@ -292,6 +301,27 @@ class VisionSettings(BaseModel):
         default=256,
         ge=1,
         description="Maximum tokens to generate per screenshot description.",
+    )
+    repeat_penalty: float = Field(
+        default=1.3,
+        ge=1.0,
+        description=(
+            "Passed to the vision model's create_chat_completion() call "
+            "for both describe() and locate(). Added 2026-07-17 after a "
+            "real-hardware failure: describe() got stuck in a ~900-token "
+            "exact-repeat loop ('[0:00] (0:00) [0:00] ...') on "
+            "ggml-org/Qwen2.5-VL-3B-Instruct-GGUF at the low temperature "
+            "(0.1) describe()/locate() intentionally use for grounded, "
+            "non-creative output -- neither call had ever passed "
+            "repeat_penalty explicitly before this, silently relying on "
+            "whichever default create_chat_completion's underlying "
+            "library version ships, which this incident showed isn't "
+            "reliably strong enough to break a loop once one starts. 1.3 "
+            "is a commonly effective value for this failure mode without "
+            "being aggressive enough to noticeably hurt normal caption "
+            "quality -- not independently benchmarked here, revisit if "
+            "real usage still shows loops, or shows degraded captions."
+        ),
     )
     caption_prompt: str = Field(
         default=(

@@ -29,6 +29,16 @@ DEFAULT_N_CTX = 4096
 DEFAULT_N_GPU_LAYERS = -1  # -1 = offload every layer to GPU
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 512
+# Added 2026-07-17 after a real-hardware failure mirroring vision/model.py's:
+# generate() got stuck exactly repeating a short paragraph back at the user
+# instead of answering, observed on Qwen2.5-0.5B-Instruct once the prompt
+# grew large (screen caption + OCR + conversation history). generate() had
+# never passed repeat_penalty explicitly, same gap vision/model.py had before
+# its own 2026-07-17 fix -- see that file's DEFAULT_REPEAT_PENALTY comment
+# for the full explanation. Same value reused here for consistency; not
+# independently tuned for this smaller model, revisit if loops persist or
+# quality degrades.
+DEFAULT_REPEAT_PENALTY = 1.3
 DEFAULT_SYSTEM_PROMPT = (
     "You are Iris, a concise local AI desktop copilot. Keep answers short "
     "and to the point unless the user asks for more detail."
@@ -138,6 +148,7 @@ class LLMEngine:
         user_text: str,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
+        repeat_penalty: float = DEFAULT_REPEAT_PENALTY,
         history: list[tuple[str, str]] | None = None,
     ) -> str:
         """Generate a reply to a single user utterance.
@@ -169,6 +180,7 @@ class LLMEngine:
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            repeat_penalty=repeat_penalty,
         )
         text = result["choices"][0]["message"]["content"].strip()
 

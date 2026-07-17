@@ -39,16 +39,25 @@ speech:
   max_duration_seconds: 10.0
 
 llm:
-  repo_id: Qwen/Qwen2.5-0.5B-Instruct-GGUF  # small model for fast dev-machine iteration
-  filename: qwen2.5-0.5b-instruct-q4_k_m.gguf
+  repo_id: Qwen/Qwen2.5-7B-Instruct-GGUF  # bumped 2026-07-17: 0.5B was a dev-iteration placeholder (see docs/DECISIONS.md 2026-07-xx) -- real hardware (RTX 3070 Ti, 8GB VRAM) has headroom since vision runs CPU-only (n_gpu_layers: 0 below), and 0.5B was producing confused/garbled synthesis of screen context, not just terse answers
+  filename: qwen2.5-7b-instruct-q4_k_m.gguf  # ~4.7GB, fits comfortably in 8GB VRAM alongside KV cache at n_ctx 4096
   local_model_path: null  # set to a .gguf path to bypass the Hub download entirely
   n_ctx: 4096
   n_gpu_layers: -1  # -1 = offload all layers to GPU
   temperature: 0.7
   max_tokens: 512
+  repeat_penalty: 1.3  # fixes exact-repeat loops seen on Qwen2.5-0.5B once the prompt grows large (screen caption + OCR + history). See config/schema.py.
   system_prompt: >-
-    You are Iris, a concise local AI desktop copilot. Keep answers short
-    and to the point unless the user asks for more detail.
+    You are Iris, a proactive local AI desktop copilot. Your job is not to
+    describe the screen -- it is to help the user with whatever they're
+    doing. Infer their task from the screen context and give actionable,
+    specific feedback: if they're editing a photo, give real photography/
+    editing critique (exposure, color, composition, masking); if they're
+    coding, review the logic and structure; if they're editing video, speak
+    to pacing and cuts. Prefer one or two concrete suggestions over passive
+    description. When the screen description and the verbatim on-screen
+    text disagree, trust the verbatim text. Keep answers short and to the
+    point unless the user asks for more detail.
 
 vision:
   enabled: false  # opt-in: off by default, no screenshot is ever taken until this is true
@@ -64,7 +73,8 @@ vision:
   n_gpu_layers: 0  # offloads the vision model's TEXT half only. Confirmed on real hardware this does NOT speed up image encoding (CLIP/mmproj path is CPU-bound regardless -- known llama-cpp-python limitation, see config/schema.py)
   max_image_dimension: 512  # downscale captures to at most this many px on the long side before sending to the vision model; null = full resolution. VALIDATED 2026-07-17: 234s -> ~22s (~90% reduction), reproducible. See config/schema.py / docs/DECISIONS.md.
   max_tokens: 256  # max tokens generated per screenshot description
-  caption_prompt: "Describe what's on this screen concisely, focusing on any visible application windows, UI elements, and what the user appears to be doing."
+  repeat_penalty: 1.3  # passed to describe()/locate(); fixes a real repeat-loop failure found 2026-07-17. See config/schema.py.
+  caption_prompt: "Identify the application and what the user is working on. If it's a photo (e.g. Lightroom/Photoshop), note exposure, color, composition, or masking issues worth mentioning. If it's code, note structure, naming, or logic worth flagging. If it's video editing, note pacing or cuts. Be concise and concrete -- a domain expert's quick read, not a visual description of the UI chrome."
   trigger_keywords: [screen, see, look, this, here]  # vision only runs if the query contains one of these (case-insensitive); [] = always run
   locate_trigger_keywords: [where, find, point, show me, locate]  # locate() only runs if the query contains one of these (case-insensitive); [] = always attempt
   ocr_enabled: true  # also run Tesseract OCR for verbatim on-screen text, alongside the scene description
