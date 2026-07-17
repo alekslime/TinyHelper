@@ -266,6 +266,7 @@ def main() -> int:
                 n_ctx=settings.llm.n_ctx,
                 n_gpu_layers=settings.llm.n_gpu_layers,
                 system_prompt=settings.llm.system_prompt,
+                verbose=settings.debug.enabled,
             )
         except RuntimeError:
             logger.exception("Could not load the LLM — continuing without generated responses.")

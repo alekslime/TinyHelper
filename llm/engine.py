@@ -73,6 +73,7 @@ class LLMEngine:
         n_ctx: int = DEFAULT_N_CTX,
         n_gpu_layers: int = DEFAULT_N_GPU_LAYERS,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        verbose: bool = False,
     ) -> None:
         self._system_prompt = system_prompt
 
@@ -88,7 +89,7 @@ class LLMEngine:
                     model_path=local_model_path,
                     n_ctx=n_ctx,
                     n_gpu_layers=n_gpu_layers,
-                    verbose=False,
+                    verbose=verbose,
                 )
             else:
                 logger.info(
@@ -100,7 +101,7 @@ class LLMEngine:
                     n_gpu_layers,
                 )
                 self._model = self._load_from_hub_with_retry(
-                    repo_id, filename, n_ctx, n_gpu_layers
+                    repo_id, filename, n_ctx, n_gpu_layers, verbose
                 )
         except Exception as exc:
             target = local_model_path or f"{repo_id}/{filename}"
@@ -113,7 +114,7 @@ class LLMEngine:
         logger.info("LLM ready.")
 
     def _load_from_hub_with_retry(
-        self, repo_id: str, filename: str, n_ctx: int, n_gpu_layers: int
+        self, repo_id: str, filename: str, n_ctx: int, n_gpu_layers: int, verbose: bool = False
     ) -> Llama:
         last_exc: Exception | None = None
         for attempt in range(1, DOWNLOAD_RETRY_ATTEMPTS + 1):
@@ -123,7 +124,7 @@ class LLMEngine:
                     filename=filename,
                     n_ctx=n_ctx,
                     n_gpu_layers=n_gpu_layers,
-                    verbose=False,
+                    verbose=verbose,
                 )
             except Exception as exc:  # noqa: BLE001 - deliberately broad, see retry note above
                 last_exc = exc
