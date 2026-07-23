@@ -3,6 +3,7 @@ README.md
 pyproject.toml
 app/__init__.py
 app/dynamic_island.py
+app/hotkey.py
 app/llm_bridge.py
 app/locate_bridge.py
 app/main_window.py
@@ -39,6 +40,7 @@ overlay/__init__.py
 speech/__init__.py
 speech/listening_session.py
 speech/transcriber.py
+tests/test_hotkey.py
 tests/test_llm_engine.py
 tests/test_main_vision_resize.py
 tests/test_memory_store.py

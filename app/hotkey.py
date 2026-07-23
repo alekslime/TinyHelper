@@ -137,8 +137,17 @@ class GlobalHotkeyFilter(QObject, QAbstractNativeEventFilter):
             )
             return
 
-        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-        if not user32.RegisterHotKey(None, self._hotkey_id, self._modifiers, self._vk):
+        # use_last_error=True is required here, not optional: without it,
+        # ctypes doesn't capture GetLastError() for calls through this
+        # handle at all, so ctypes.get_last_error() below could return a
+        # stale/unrelated value (e.g. 0, "success") even when
+        # RegisterHotKey genuinely failed -- see
+        # https://github.com/python/cpython/issues/132888 and
+        # https://github.com/enthought/pywin32-ctypes/issues/122. Kept as
+        # an instance attribute (rather than a fresh ctypes.windll.user32
+        # lookup) so unregister() below queries the same handle.
+        self._user32 = ctypes.WinDLL("user32", use_last_error=True)
+        if not self._user32.RegisterHotKey(None, self._hotkey_id, self._modifiers, self._vk):
             error_code = ctypes.get_last_error()
             logger.warning(
                 "RegisterHotKey failed (id=%d, modifiers=0x%x, vk=0x%x, "
@@ -165,7 +174,7 @@ class GlobalHotkeyFilter(QObject, QAbstractNativeEventFilter):
         succeeded, and safe to call twice."""
         if not self.is_registered:
             return
-        ctypes.windll.user32.UnregisterHotKey(None, self._hotkey_id)  # type: ignore[attr-defined]
+        self._user32.UnregisterHotKey(None, self._hotkey_id)
         self.is_registered = False
         logger.debug("Global hotkey (id=%d) unregistered.", self._hotkey_id)
 
