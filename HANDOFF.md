@@ -110,6 +110,56 @@ to IDLE/ERROR) and the default hotkey (`ctrl+shift+space`, chosen only
 because it seemed unlikely to collide with common app shortcuts — not
 verified against anything on the actual test machine).
 
+**Same-session follow-up (still 2026-07-23):** after confirming the
+hotkey pops the island up on real hardware, the user asked for a real
+text box inside it — "let it be the debug screen." Added:
+- `app/dynamic_island.py` — a debug-only `QLineEdit` (constructor gains
+  `debug_enabled: bool`), positioned inside the expanded panel, shown/
+  focused only once fully expanded (hidden during the collapse/expand
+  animation and while collapsed, so it never overflows the small pill).
+  New `text_submitted` signal, same contract as
+  `app/main_window.py:debug_text_submitted`. Explicitly calls
+  `activateWindow()`/`setFocus()` on expand so a hotkey/wake-word pop-up
+  is immediately typeable without an extra click.
+- `main.py` — passes `debug_enabled=settings.debug.enabled` into the
+  island's constructor and connects `island.text_submitted` to the exact
+  same `on_debug_text_submitted` handler `MainWindow`'s debug input
+  already used — one handler, two input surfaces now.
+
+This is still unverified on real hardware (same PySide6/Windows gap as
+the hotkey work above) — the geometry math and signal wiring were
+reasoned through carefully but not run. Specifically worth checking
+next real-hardware pass: does `activateWindow()` actually steal focus
+from whatever app the user was in when the wake word (not the hotkey)
+triggered the expand — that's arguably fine for a hotkey-driven "I want
+to type now" moment, less obviously fine for a voice-driven expand where
+the user wasn't necessarily reaching for a keyboard at all.
+
+**Real-hardware confirmation, same session:** the user then actually ran
+this on their machine — hotkey, island expand/collapse, and the new
+debug text box all confirmed working end-to-end (typed "hi", got a real
+LLM response, spoke via TTS, island collapsed on turn end). **This is
+the first real-hardware confirmation of any of Milestone 10's activation
+work** — update the "Milestones completed" line above accordingly next
+time this file's summary is rewritten wholesale.
+
+**Real-hardware crash found during that same test, fixed same session:**
+submitting the same vision query twice within the vision model's
+multi-second inference window caused two worker threads to call into
+the same non-thread-safe llama.cpp context, crashing the whole process
+(`GGML_ASSERT(out_ids.size() == n_outputs)`). Added a reentrancy guard
+(`current_turn["active"]`) that refuses a new wake word/debug submission
+while a previous turn's generation is still in flight — see
+`docs/DECISIONS.md`'s 2026-07-23 entry for the full reasoning,
+including why the guard is scoped to generation only (not the whole
+turn through TTS playback, which would have regressed the existing
+barge-in-during-speech behavior). **Not yet re-tested on real
+hardware** — same sandbox gap as everything else this session. Worth a
+clean single-query pass first, then deliberately trying to trigger the
+old race again (submit a second query while the first is still
+captioning) to confirm it's now refused with a log warning instead of
+crashing.
+
 **Session 10 (2026-07-16, same day) — Milestone 10 reframed, Part A:
 static Dynamic Island widget.** The user redirected this milestone
 before any settings-screen code was written: instead of a generic
@@ -406,14 +456,23 @@ no-token-budget-accounting caveat on `context_turns`, in
 - `app/hotkey.py` (new) — `GlobalHotkeyFilter`, `parse_hotkey()`, Win32
   constants. Windows-only functional; safe no-op import/construction on
   any other platform.
+- `app/dynamic_island.py` — added the debug-only embedded `QLineEdit`
+  (`text_submitted` signal, `debug_enabled` constructor param,
+  show/focus/position logic tied to the expand animation).
 - `config/schema.py` — new `IslandSettings`, registered on `AppSettings`
   as `island`.
 - `config/default_config.yaml` — matching `island:` block.
 - `main.py` — constructs `DynamicIslandWidget`, registers the hotkey via
   `GlobalHotkeyFilter` + `app.installNativeEventFilter`, wires
   `island.expand()` into `on_wake_word_detected`, wires
-  `island.collapse()` into every existing turn-end callback, unregisters
-  the hotkey at shutdown.
+  `island.collapse()` into every existing turn-end callback, connects
+  `island.text_submitted` to the same handler as the `MainWindow` debug
+  input, unregisters the hotkey at shutdown. Also (same-session
+  follow-up, after a real crash): `on_wake_word_detected` now returns
+  `bool` and refuses a new turn while `current_turn["active"]` is set;
+  that flag is set before spawning `_generate_worker`'s thread and
+  cleared in `on_llm_response`/`on_llm_failed`. See
+  `docs/DECISIONS.md`'s 2026-07-23 entry.
 - `HANDOFF.md` (this file) — this entry.
 
 **NOT touched this session, still exactly as Session 10 left them:**

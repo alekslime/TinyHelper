@@ -9,11 +9,16 @@ rather than in a separate always-visible panel, and this widget also
 becomes Iris's new default-visible surface, retiring `app/main_window.py`'s
 always-on debug window (Part D of this milestone).
 
-This is Part A only: a static widget with two visual states
-(`IslandState.COLLAPSED` / `IslandState.EXPANDED`) and the shape/color/
-positioning to match. No activation wiring yet -- no global hotkey, no
-wake-word hookup, no working settings button. See `set_state()`/`expand()`/
-`collapse()`/`toggle()` for the public surface later parts will call into.
+This is Part A's static shell plus a slice of Part B: two visual states
+(`IslandState.COLLAPSED` / `IslandState.EXPANDED`), the shape/color/
+positioning, global-hotkey/wake-word activation (wired in `main.py`, see
+`app/hotkey.py`), and -- ahead of the real settings surface Part C was
+meant to add -- an optional embedded `QLineEdit` debug text box, gated on
+`debug_enabled` (mirroring `app/main_window.py`'s existing debug input:
+same idea, same "developer aid, not real UX" caveat, just living in the
+island instead of the placeholder window now). See `set_state()`/
+`expand()`/`collapse()`/`toggle()` for the public surface, and
+`text_submitted` for the debug input's output signal.
 
 Deliberately independent of `aura/`: `AuraRenderer` communicates Iris's
 *ambient state* via full-screen edge color (see `aura/renderer/base.py`),
@@ -29,9 +34,9 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
-from PySide6.QtCore import QEasingCurve, QRect, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QRect, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLineEdit, QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,14 @@ EXPANDED_CORNER_RADIUS_PX = 28
 
 # Gap between the widget's bottom edge and the screen's bottom edge.
 BOTTOM_MARGIN_PX = 16
+
+# --- Debug text box geometry (within the expanded panel) ----------------
+# Positioned below the title, replacing the placeholder hint line that
+# runs when no debug input exists. Uses the same `margin = 20` the
+# painted content already uses (see _paint_expanded_content) so the box
+# lines up with the title/gear glyph above it.
+DEBUG_INPUT_TOP_PX = 54
+DEBUG_INPUT_HEIGHT_PX = 32
 
 # --- Color -----------------------------------------------------------
 # Near-black dark gray, per the user's explicit call (not pure black --
@@ -85,11 +98,17 @@ class DynamicIslandWidget(QWidget):
 
     Unlike `aura/renderer`'s `_AuraOverlayWidget`/`_TargetBoxWidget`, this
     widget is *not* click-through (`WA_TransparentForMouseEvents` is
-    intentionally omitted) -- it needs to receive real clicks once Part B/C
-    wire up interaction. For now nothing is wired to those clicks yet.
+    intentionally omitted) -- Part B gives it its first real interactive
+    content, the debug text box below.
     """
 
-    def __init__(self) -> None:
+    # Emitted when text is submitted via the embedded debug input (Enter
+    # key), carrying the text as if it had been spoken and transcribed --
+    # same contract as `app/main_window.py`'s `debug_text_submitted`, so
+    # `main.py` can wire both to the identical handler.
+    text_submitted = Signal(str)
+
+    def __init__(self, debug_enabled: bool = False) -> None:
         super().__init__()
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -101,14 +120,45 @@ class DynamicIslandWidget(QWidget):
 
         self._state = IslandState.COLLAPSED
         self._current_rect = self._target_rect(IslandState.COLLAPSED)
+        self._debug_enabled = debug_enabled
 
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(TRANSITION_MS)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim_value)
+        self._anim.finished.connect(self._on_anim_finished)
+
+        # Debug-only text input (mirrors app/main_window.py's debug
+        # panel), only ever constructed when debug_enabled -- an
+        # end-user build has no way to type a query, only speak or use
+        # the hotkey/wake word to expand the island's status view. Starts
+        # hidden; only ever shown, positioned, and focused once fully
+        # EXPANDED (see _on_anim_finished/_position_debug_input) so it
+        # never visually overflows the small collapsed pill or a
+        # mid-transition shape.
+        self._debug_input: QLineEdit | None = None
+        if debug_enabled:
+            self._debug_input = QLineEdit(self)
+            self._debug_input.setPlaceholderText('Type a command (debug) — e.g. "what does this mean?"')
+            self._debug_input.setStyleSheet(
+                "QLineEdit {"
+                " background-color: rgba(255, 255, 255, 30);"
+                " border: 1px solid rgba(255, 255, 255, 60);"
+                " border-radius: 8px;"
+                " color: rgb(235, 235, 235);"
+                " padding: 4px 8px;"
+                " selection-background-color: rgba(255, 255, 255, 80);"
+                "}"
+            )
+            self._debug_input.returnPressed.connect(self._submit_debug_input)
+            self._debug_input.hide()
 
         self.setGeometry(self._current_rect)
-        logger.debug("DynamicIslandWidget constructed (state=%s).", self._state.value)
+        logger.debug(
+            "DynamicIslandWidget constructed (state=%s, debug_enabled=%s).",
+            self._state.value,
+            debug_enabled,
+        )
 
     # -- geometry -----------------------------------------------------
 
@@ -136,12 +186,56 @@ class DynamicIslandWidget(QWidget):
         self._current_rect = rect
         self.setGeometry(rect)
         self.update()
+        # Always hidden mid-transition -- a mid-size rect is neither the
+        # small collapsed pill nor the full expanded panel, and the input
+        # box's fixed geometry (see _position_debug_input) would overflow
+        # it. Shown again in _on_anim_finished only if we landed on
+        # EXPANDED.
+        if self._debug_input is not None:
+            self._debug_input.hide()
+
+    def _on_anim_finished(self) -> None:
+        if self._debug_input is not None and self._state is IslandState.EXPANDED:
+            self._show_and_focus_debug_input()
+
+    def _position_debug_input(self) -> None:
+        assert self._debug_input is not None
+        margin = 20
+        width = EXPANDED_WIDTH_PX - 2 * margin
+        self._debug_input.setGeometry(margin, DEBUG_INPUT_TOP_PX, width, DEBUG_INPUT_HEIGHT_PX)
+
+    def _show_and_focus_debug_input(self) -> None:
+        assert self._debug_input is not None
+        self._position_debug_input()
+        self._debug_input.show()
+        # WA_ShowWithoutActivating (see __init__) means expanding via the
+        # hotkey or wake word doesn't steal focus on its own -- explicitly
+        # activate here so the debug box is immediately typeable without
+        # an extra click, which is the whole point of it existing.
+        self.activateWindow()
+        self._debug_input.setFocus()
+
+    def _submit_debug_input(self) -> None:
+        assert self._debug_input is not None
+        text = self._debug_input.text().strip()
+        if not text:
+            return
+        logger.info('Island debug input submitted: "%s"', text)
+        self.text_submitted.emit(text)
+        self._debug_input.clear()
 
     # -- public state API (later parts wire triggers to these) --------
 
     def set_state(self, state: IslandState) -> None:
         """Animate from the current geometry to `state`'s geometry."""
         if state is self._state and self._anim.state() != QVariantAnimation.State.Running:
+            # Already at rest in this state -- for EXPANDED with a debug
+            # input, still worth re-focusing (e.g. the wake word fired
+            # again while the island was already open and the user had
+            # clicked elsewhere), since _on_anim_finished won't fire when
+            # no animation actually runs.
+            if state is IslandState.EXPANDED and self._debug_input is not None:
+                self._show_and_focus_debug_input()
             return
         self._state = state
         start_rect = QRect(self.geometry()) if self.isVisible() else self._current_rect
@@ -220,11 +314,10 @@ class DynamicIslandWidget(QWidget):
         painter.end()
 
     def _paint_expanded_content(self, painter: QPainter, rect: QRect) -> None:
-        """Placeholder content for the expanded state: a title, a status
-        line standing in for a future response/status area, and a
-        decorative (non-interactive) settings glyph. Part C wires this
-        icon to a real settings surface and replaces the status line with
-        live content.
+        """Content for the expanded state: a title, a status line/debug
+        input standing in for a future response area, and a decorative
+        (non-interactive) settings glyph. Part C wires this icon to a
+        real settings surface.
         """
         margin = 20
 
@@ -234,6 +327,14 @@ class DynamicIslandWidget(QWidget):
         title_font.setBold(True)
         painter.setFont(title_font)
         painter.drawText(margin, margin + 14, "Iris")
+
+        # When the real debug QLineEdit exists, it occupies this space
+        # (see DEBUG_INPUT_TOP_PX) -- the static hint line would either
+        # sit uselessly behind/above it or need its own separate area, so
+        # skip it entirely rather than duplicate the same "type here"
+        # message via two different affordances.
+        if self._debug_input is not None:
+            return
 
         painter.setPen(QColor(190, 190, 190, 200))
         body_font = painter.font()

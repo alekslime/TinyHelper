@@ -228,7 +228,7 @@ def main() -> int:
     # `settings.island.enabled` None-checks through them; only whether
     # it's ever shown, and whether the hotkey is registered, are gated
     # on that setting.
-    island = DynamicIslandWidget()
+    island = DynamicIslandWidget(debug_enabled=settings.debug.enabled)
     if settings.island.enabled:
         island.show()
     else:
@@ -287,7 +287,26 @@ def main() -> int:
     # IDLE in that same stale-callback case, a separate, pre-existing race
     # this doesn't fix — see docs/TODO.md, it's squarely what the planned
     # barge-in milestone needs to resolve properly.)
-    current_turn: dict[str, TurnTimer | None] = {"timer": None, "speaking_turn": None}
+    # `active` (added Session 11 after a real-hardware crash — see
+    # docs/DECISIONS.md's 2026-07-23 entry) guards against a second turn
+    # actually starting while a previous one is still in flight on its
+    # worker thread. Before this, on_wake_word_detected had no reentrancy
+    # guard at all: a second wake word/debug submission could launch a
+    # second _generate_worker thread that called into the *same*
+    # llm_engine/vision_model instances the first worker was still using
+    # -- llama.cpp's context isn't safe for concurrent inference calls,
+    # and this is exactly what produced a real
+    # GGML_ASSERT(out_ids.size() == n_outputs) crash (easy to trigger
+    # from the island's debug box: type, hit Enter, nothing visibly
+    # happens for several seconds while vision captioning runs, so you
+    # retype and hit Enter again). Set True in on_wake_word_detected,
+    # cleared at every one of this turn's terminal points (the same
+    # points that already call island.collapse()).
+    current_turn: dict[str, TurnTimer | None | bool] = {
+        "timer": None,
+        "speaking_turn": None,
+        "active": False,
+    }
 
     # Loaded eagerly (like the wake word / Whisper models) so the first
     # real utterance isn't delayed by a cold-start model load. Failure here
@@ -336,7 +355,6 @@ def main() -> int:
                 local_mmproj_path=settings.vision.local_mmproj_path,
                 n_ctx=settings.vision.n_ctx,
                 n_gpu_layers=settings.vision.n_gpu_layers,
-                n_threads=settings.vision.n_threads,
             )
         except RuntimeError:
             logger.exception(
@@ -434,8 +452,32 @@ def main() -> int:
                 "conversion — falling back to a (0, 0) offset."
             )
 
-    def on_wake_word_detected(model_name: str, score: float) -> None:
+    def on_wake_word_detected(model_name: str, score: float) -> bool:
         # Runs on the main thread (Qt queues the signal delivery for us).
+        # Returns whether a turn actually started -- callers that invoke
+        # this directly (on_debug_text_submitted, below) need to know so
+        # they don't go on to call on_transcribed() for a turn that was
+        # just refused.
+        #
+        # Session 11: refuse a new turn outright while a previous one's
+        # generation is still running (current_turn["active"], set/
+        # cleared around the _generate_worker thread in on_transcribed/
+        # on_llm_response/on_llm_failed below) -- see docs/DECISIONS.md's
+        # 2026-07-23 entry for the real crash this fixes. Deliberately
+        # does NOT block a new wake word while only *TTS playback* from a
+        # completed previous turn is ongoing (current_turn["active"] is
+        # already False by then) -- that's the existing, intentional
+        # barge-in-during-speech behavior (see settings.tts.
+        # interrupt_on_new_query), which this guard leaves untouched.
+        if current_turn["active"]:
+            logger.warning(
+                "Ignoring wake word '%s' — a previous query is still "
+                "generating a response. Wait for it to finish before "
+                "asking again.",
+                model_name,
+            )
+            return False
+
         logger.info("Wake word '%s' detected (score=%.3f) — Aura -> LISTENING", model_name, score)
         # Milestone 11, Part A: a new turn starts here. Any previous
         # timer is simply dropped, unlogged, if it hadn't reached a
@@ -450,6 +492,7 @@ def main() -> int:
         aura.set_state(AuraState.LISTENING)
         if settings.island.expand_on_wake_word:
             island.expand()
+        return True
 
     def _build_prompt_with_screen_context(text: str) -> str | None:
         # Runs on the same worker thread as generation (see _generate_worker).
@@ -721,6 +764,7 @@ def main() -> int:
                 current_turn["timer"] = None
             return
 
+        current_turn["active"] = True
         threading.Thread(target=_generate_worker, args=(text, turn), daemon=True).start()
 
     def on_llm_response(text: str) -> None:
@@ -731,6 +775,12 @@ def main() -> int:
         # IDLE, exactly as before this milestone.
         logger.info('LLM response ready (%d chars)', len(text))
         window.show_response(text)
+        # Session 11: generation itself is done as soon as this callback
+        # fires -- clear the reentrancy guard here regardless of whether
+        # TTS follows, since _speak_worker below never touches
+        # llm_engine/vision_model. Safe to accept a new wake word during
+        # SPEAKING; see on_wake_word_detected's docstring.
+        current_turn["active"] = False
         turn = current_turn["timer"]
         if tts_engine is not None:
             logger.info("Speaking response — Aura -> SPEAKING")
@@ -754,6 +804,7 @@ def main() -> int:
         # Runs on the main thread.
         logger.error("LLM generation failed: %s", message)
         window.show_response(f"(LLM error — see logs: {message})")
+        current_turn["active"] = False
         # Milestone 11, Part A: the turn ends here on failure too — a
         # failed generation still spent real time in stt/vision/llm worth
         # logging, even without a response to speak.
@@ -860,10 +911,15 @@ def main() -> int:
         # the transcription result. Now also exercises the LLM the same
         # way real voice input would.
         logger.info('Debug text input treated as a voice command: "%s"', text)
-        on_wake_word_detected("debug_text_input", 1.0)
+        if not on_wake_word_detected("debug_text_input", 1.0):
+            # Session 11: a previous turn is still generating -- refused,
+            # see on_wake_word_detected's docstring. Don't go on to call
+            # on_transcribed() for a turn that never actually started.
+            return
         on_transcribed(text)
 
     window.debug_text_submitted.connect(on_debug_text_submitted)
+    island.text_submitted.connect(on_debug_text_submitted)
 
     exit_code = app.exec()
 

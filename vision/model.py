@@ -70,28 +70,13 @@ DEFAULT_N_CTX = 4096
 # main LLM's VRAM usage, there usually isn't spare VRAM for this model
 # too on a 4GB card anyway -- see docs/DECISIONS.md before changing.
 DEFAULT_N_GPU_LAYERS = 0
-# Added 2026-07-17 (i7-6820HQ laptop, 4 physical / 8 logical cores):
-# CLIP/mmproj image encoding is CPU-bound regardless of n_gpu_layers (see
-# that field's docstring above), so thread count is one of the few real
-# levers left for this stage. Left unset, llama-cpp-python falls back to
-# its own auto-detected default, which is not guaranteed to match physical
-# core count. Pinning to physical cores (4) avoids hyperthread contention
-# on matrix-heavy CPU work -- the extra 4 logical threads add scheduling
-# overhead without real extra throughput for this kind of workload.
-# Revisit if profiling on real hardware shows a different number wins.
-DEFAULT_N_THREADS = 4
 # Lowered from 256 -- paired with the tightened DEFAULT_SYSTEM_PROMPT/
 # DEFAULT_CAPTION_PROMPT below (~400 char target), 256 tokens left enough
 # headroom for the model to fall back into a repetitive multi-point
 # checklist once it ran out of new things to say. ~150 tokens is roughly
 # 400-500 chars of English, matching the prompt's stated budget while still
 # leaving room for the "one sentence + up to two observations" shape.
-# Tightened again 2026-07-17 (100 tokens, ~350-400 chars) after a real
-# turn overran its own 400-character budget at 150 tokens (507 chars
-# generated) -- see docs/DECISIONS.md. Also directly shortens TTS
-# playback time, since main.py's tts= stage duration is dominated by
-# spoken-audio length, not synthesis overhead.
-DEFAULT_MAX_TOKENS = 100
+DEFAULT_MAX_TOKENS = 150
 # Added 2026-07-17 after a real-hardware failure: describe() got stuck in
 # a ~900-token exact-repeat loop ("[0:00] (0:00) [0:00] ..."), observed
 # on ggml-org/Qwen2.5-VL-3B-Instruct-GGUF at temperature=0.1. Neither
@@ -215,7 +200,6 @@ class VisionModel:
         local_mmproj_path: str | None = None,
         n_ctx: int = DEFAULT_N_CTX,
         n_gpu_layers: int = DEFAULT_N_GPU_LAYERS,
-        n_threads: int = DEFAULT_N_THREADS,
         verbose: bool = False,
     ) -> None:
         """`verbose=True` surfaces llama.cpp's own internal logging --
@@ -233,12 +217,10 @@ class VisionModel:
                         "local_mmproj_path is required when local_model_path is set."
                     )
                 logger.info(
-                    "Loading local vision model from '%s' (mmproj='%s', n_ctx=%d, "
-                    "n_threads=%d)...",
+                    "Loading local vision model from '%s' (mmproj='%s', n_ctx=%d)...",
                     local_model_path,
                     local_mmproj_path,
                     n_ctx,
-                    n_threads,
                 )
                 chat_handler = MiniCPMv26ChatHandler(
                     clip_model_path=local_mmproj_path, verbose=verbose
@@ -248,18 +230,16 @@ class VisionModel:
                     chat_handler=chat_handler,
                     n_ctx=n_ctx,
                     n_gpu_layers=n_gpu_layers,
-                    n_threads=n_threads,
                     verbose=verbose,
                 )
             else:
                 logger.info(
-                    "Loading vision model '%s/%s' (n_ctx=%d, n_threads=%d) -- "
-                    "first run downloads GGUF weights (~5.7GB total) from "
-                    "Hugging Face Hub, cached after that...",
+                    "Loading vision model '%s/%s' (n_ctx=%d) -- first run "
+                    "downloads GGUF weights (~5.7GB total) from Hugging Face "
+                    "Hub, cached after that...",
                     repo_id,
                     model_filename,
                     n_ctx,
-                    n_threads,
                 )
                 chat_handler = MiniCPMv26ChatHandler.from_pretrained(
                     repo_id=repo_id,
@@ -272,7 +252,6 @@ class VisionModel:
                     chat_handler=chat_handler,
                     n_ctx=n_ctx,
                     n_gpu_layers=n_gpu_layers,
-                    n_threads=n_threads,
                     verbose=verbose,
                 )
         except Exception as exc:

@@ -1482,3 +1482,68 @@ deliberately customized this" apart from "this is just left over from an
 older default") is the same one noted for `vision.repo_id`/model settings
 in `docs/TODO.md`, and applies here too now that prompts are large
 enough to drift the same way.
+
+---
+
+## 2026-07-23 — Real-hardware crash: concurrent generation calls into a shared, non-thread-safe llama.cpp context
+
+**What happened.** During Session 11's real-hardware confirmation of the
+Dynamic Island's new debug text box, the same query ("what do you see on
+the screen?") was submitted twice, six seconds apart, while the first
+submission's vision captioning was still running (slow: multi-second
+image-slice encoding on this hardware). The second submission launched a
+second `_generate_worker` thread that called into the *same*
+`vision_model`/`llm_engine` instances the first worker was still using.
+Shortly after, the whole process crashed with
+`GGML_ASSERT(out_ids.size() == n_outputs) failed`, surfaced through
+Python first as an `OSError` (llama-cpp-python's ctypes bindings appear
+to catch the underlying Windows SEH exception and re-raise it as an
+`OSError` at the call site that triggered it), then a hard process abort
+shortly after — consistent with a native `GGML_ASSERT` calling `abort()`
+somewhere in the corrupted shared state, which kills the whole process
+regardless of which thread hit it, not just a Python-catchable exception
+in the thread that happened to trigger it.
+
+**Decision:** Added a reentrancy guard (`current_turn["active"]` in
+`main.py`) that refuses a new wake word/debug submission outright while
+a previous turn's generation (`_generate_worker`, covering both the
+vision and llm stages) is still running, rather than letting two worker
+threads share one llama.cpp context concurrently. Set to `True` right
+before spawning `_generate_worker`'s thread (in `on_transcribed`),
+cleared in `on_llm_response`/`on_llm_failed` — i.e. as soon as
+generation itself is done, not once TTS finishes speaking.
+
+**Why the guard is scoped to generation only, not the whole turn
+(including TTS playback):** `on_wake_word_detected` (Milestone 8, prior
+to this session) is designed to let a new wake word interrupt TTS still
+playing from a previous, *already-completed* turn — an intentional
+barge-in feature (`settings.tts.interrupt_on_new_query`), and
+`_speak_worker` only touches `tts_engine`, never `llm_engine`/
+`vision_model`. Blocking new triggers for the whole turn (through
+TTS_finished) would have silently regressed that existing barge-in
+behavior as a side effect of fixing an unrelated crash. The guard only
+ever needs to cover the actual unsafe window: from starting
+`_generate_worker`'s thread to that same worker reporting a result.
+
+**Alternative considered:** A lock/mutex around `llm_engine.generate()`/
+`vision_model.describe()`/`.locate()` that makes a second concurrent call
+*wait* for the first to finish, rather than refusing it outright.
+Rejected for now — queuing a second query behind a possibly 10+ second
+first one, with no UI indication anything is queued, seems like it would
+read as Iris silently ignoring the second attempt for a while and then
+suddenly responding to it out of nowhere. An outright refusal with a
+logged warning is simpler and more honest about what's happening; if this
+becomes a real UX complaint (users legitimately queuing follow-ups),
+revisit with an actual queue plus a visible "still working" indication in
+the island.
+
+**Not fixed by this change, and worth flagging:** whether the *first*
+call's result (the one already in flight when the second was refused)
+is trustworthy after this incident is unconfirmed -- the assert fired
+during the *second* concurrent call, but if any corrupted internal state
+briefly existed before the process aborted, there's no way to know from
+this session's evidence whether a first call running fully alone (this
+fix's new guaranteed condition) is itself entirely reliable, only that
+running two at once definitely isn't. Worth a clean single-query
+real-hardware pass to confirm no assert fires even under normal,
+non-overlapping use before considering this fully closed.
