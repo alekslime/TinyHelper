@@ -103,5 +103,10 @@ memory:
   db_path: null  # defaults to <app data dir>/data/conversations.db
   context_turns: 5  # 0 = don't feed history back into the prompt (Part B)
 
+island:
+  enabled: true  # master switch -- widget is still constructed when false, just never shown
+  hotkey: ctrl+shift+space  # global (system-wide) shortcut, Windows-only currently. See config/schema.py / docs/DECISIONS.md.
+  expand_on_wake_word: true  # also expand the island when the wake word fires, alongside the existing Aura LISTENING effect
+
 debug:
   enabled: true  # developer aid only -- set to false to hide once real UX lands

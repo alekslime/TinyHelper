@@ -1,25 +1,40 @@
 # HANDOFF.md
 
-**Last updated:** 2026-07-16 (Session 10)
+**Last updated:** 2026-07-23 (Session 11)
 **Milestones completed:** 1 through 6 ✅, Milestone 7 (Visual Guidance)
 code-complete (B.1-B.4), Milestone 8 (Voice Responses) confirmed on real
 hardware (Session 8), Milestone 9 (Conversation Memory, both Part A and
 Part B) done and confirmed on real hardware as of Session 9, and
 Milestone 10 (reframed as the Dynamic Island, replacing the original
-"generic settings screen" plan — see `docs/DECISIONS.md`) has Part A
-(static widget) done as of Session 10 below, with Parts B-D still open.
+"generic settings screen" plan — see `docs/DECISIONS.md`) now has Parts
+A and B code-complete (Session 10 / Session 11 below), with **Part B not
+yet confirmed on any real hardware** (see next paragraph — this
+session's sandbox couldn't even import PySide6). Parts C-D still open.
 B.3/B.4 (Milestone 7) still only have partial or no real-hardware
 confirmation — see `docs/ROADMAP.md` for full milestone history and
 `docs/TODO.md` for the part-by-part breakdown.
+
+**Read this before starting a new session — Session 11's sandbox had no
+PySide6, no Windows, and no network at all.** Unlike Session 10 (which
+had a working offscreen PySide6 install and visually verified Part A's
+rendering), this session's container couldn't `pip install PySide6`
+(no network egress) or import it from a prior install (not present), and
+obviously isn't Windows either. Everything below was written carefully
+and reasoned through against the real Win32 API contract, and the pure
+hotkey-string-parsing logic (`app/hotkey.py:parse_hotkey`) *was* unit
+tested in isolation (by stubbing `PySide6.QtCore` with plain classes) —
+but **the actual `QAbstractNativeEventFilter`/`RegisterHotKey`/
+`WM_HOTKEY` wiring has had zero real verification**: not offscreen, not
+on real hardware, not even a successful import of the real module. Full
+real-hardware verification (see "Next session" below) is not optional
+polish here, it's the first time this code will run at all.
 
 **Read this before starting a new session:** Milestone 10's scope
 changed mid-stream (Session 10) from "generic settings screen wrapping
 `config/`" to a Dynamic-Island-style floating pill overlay, with
 settings access moving inside the island rather than being its own
 screen — see `docs/DECISIONS.md`'s Milestone 10 entry for the full
-reasoning before continuing this milestone. Only Part A (the static
-widget, `app/dynamic_island.py`) is done; it is not wired into `main.py`
-at all yet.
+reasoning before continuing this milestone.
 
 **Read this before starting a new session:** Session 9 hit a real
 "the zip didn't land" problem again, but on the user's end this time —
@@ -50,6 +65,50 @@ they disagree, say so plainly and treat the checkout as ground truth.
 ---
 
 ## Summary of work completed since the last HANDOFF.md update
+
+**Session 11 (2026-07-23) — Milestone 10, Part B: activation triggers.**
+Diffed HANDOFF.md/`docs/` against the actual checkout first, per the
+standing instruction above — everything Session 10 claimed (Part A done,
+not wired into `main.py`) matched what was actually on disk. Added:
+- `app/hotkey.py` — `GlobalHotkeyFilter`, a `QAbstractNativeEventFilter`
+  that registers a system-wide hotkey via raw Win32 `RegisterHotKey`
+  (through `ctypes`, no new dependency) and emits `activated` on
+  `WM_HOTKEY`. Windows-only; no-ops (logs and continues) on any other
+  platform or if registration fails. Also `parse_hotkey()`, turning a
+  `"ctrl+shift+space"`-style string into `(modifiers, vk)`.
+- `config/schema.py` / `config/default_config.yaml` — new
+  `IslandSettings` (`enabled`, `hotkey`, `expand_on_wake_word`).
+- `main.py` — constructs the island widget (always, mirroring how `aura`
+  is always constructed), registers the hotkey and connects it to
+  `island.toggle()`, connects wake-word detection to `island.expand()`,
+  and collapses the island at every existing turn-end point
+  (`on_tts_finished`, `on_tts_failed`, `on_llm_failed`,
+  `on_no_speech_detected`, and the two no-TTS/no-LLM early-exit
+  branches) — same set of places Aura already returns to IDLE/ERROR.
+  Unregisters the hotkey on shutdown.
+
+**Verification is much weaker than usual this session — flagging this
+clearly rather than letting it blend in with confirmed work.** This
+sandbox had no PySide6 (and no network to install it) and isn't Windows,
+so none of the Qt/Win32 wiring above has ever actually run. What *was*
+verified: `python -m py_compile` on all three edited/new files, and
+`parse_hotkey()`'s pure string-parsing logic unit-tested in isolation
+(correct modifiers/vk for four hotkey strings, correct `ValueError` for
+four malformed ones — see transcript) by stubbing `PySide6.QtCore` with
+plain classes so the module would import at all. Everything else —
+whether `RegisterHotKey`/`nativeEventFilter` actually works, whether the
+island really expands/collapses on a real screen, whether the hotkey
+conflicts with anything else bound to `Ctrl+Shift+Space` on the test
+machine — needs a real Windows run before this can be called done, not
+just code-complete. Treat this Part B like Milestone 7's B.3/B.4 before
+their real-hardware pass: plausible, reasoned-through, unconfirmed.
+
+**Design decisions made without the user in the loop, worth a second
+look:** the exact "when does the island auto-collapse" behavior (every
+existing turn-end point, chosen because it's where Aura already resets
+to IDLE/ERROR) and the default hotkey (`ctrl+shift+space`, chosen only
+because it seemed unlikely to collide with common app shortcuts — not
+verified against anything on the actual test machine).
 
 **Session 10 (2026-07-16, same day) — Milestone 10 reframed, Part A:
 static Dynamic Island widget.** The user redirected this milestone
@@ -341,6 +400,28 @@ is Aleks." — confirmed by reading `conversations.db` directly, not just
 trusting the on-screen reply. Full reasoning, including the
 no-token-budget-accounting caveat on `context_turns`, in
 `docs/DECISIONS.md`'s Milestone 9 Part B entry.
+
+## Files modified (Session 11, Milestone 10 Part B)
+
+- `app/hotkey.py` (new) — `GlobalHotkeyFilter`, `parse_hotkey()`, Win32
+  constants. Windows-only functional; safe no-op import/construction on
+  any other platform.
+- `config/schema.py` — new `IslandSettings`, registered on `AppSettings`
+  as `island`.
+- `config/default_config.yaml` — matching `island:` block.
+- `main.py` — constructs `DynamicIslandWidget`, registers the hotkey via
+  `GlobalHotkeyFilter` + `app.installNativeEventFilter`, wires
+  `island.expand()` into `on_wake_word_detected`, wires
+  `island.collapse()` into every existing turn-end callback, unregisters
+  the hotkey at shutdown.
+- `HANDOFF.md` (this file) — this entry.
+
+**NOT touched this session, still exactly as Session 10 left them:**
+`app/dynamic_island.py` (Part A's widget itself — no changes needed),
+Part C (settings surface inside the expanded island — the decorative
+gear glyph in `_paint_expanded_content` is still non-interactive), Part
+D (retiring `app/main_window.py` — `MainWindow` is still constructed and
+shown in `main.py` exactly as before, alongside the island now).
 
 ## Files modified (Session 10, Milestone 10 Part A)
 

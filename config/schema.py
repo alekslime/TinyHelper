@@ -514,6 +514,48 @@ class MemorySettings(BaseModel):
     )
 
 
+class IslandSettings(BaseModel):
+    """Dynamic Island activation settings (Milestone 10, Part B).
+
+    Part A (`app/dynamic_island.py`) built the widget itself with no way
+    to trigger it. This section controls the two activation triggers
+    Part B adds -- a global keyboard shortcut and the existing wake
+    word -- plus whether the island is shown at all.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Master switch for the Dynamic Island. When false, the widget "
+            "is still constructed (so the rest of main.py's wiring doesn't "
+            "need None-checks scattered through it) but never shown, and "
+            "no global hotkey is registered."
+        ),
+    )
+    hotkey: str = Field(
+        default="ctrl+shift+space",
+        description=(
+            "Global (system-wide) keyboard shortcut that toggles the "
+            "island between collapsed/expanded, parsed by "
+            "app/hotkey.py:parse_hotkey (\"+\"-separated, e.g. "
+            "\"ctrl+alt+i\"). Windows-only currently -- see "
+            "docs/DECISIONS.md. If parsing fails or the OS-level "
+            "registration fails (e.g. already bound by another app), Iris "
+            "logs a warning and continues without it; the wake word "
+            "trigger below is unaffected either way."
+        ),
+    )
+    expand_on_wake_word: bool = Field(
+        default=True,
+        description=(
+            "Whether the existing wake-word detection also expands the "
+            "island (in addition to its existing AuraState.LISTENING "
+            "effect). Independent of the hotkey above -- either trigger "
+            "works on its own."
+        ),
+    )
+
+
 class DebugSettings(BaseModel):
     """Developer-only debug aids. None of this is part of Iris's intended
     end-user UX (which uses Aura + system tray, no visible windows or chat
@@ -548,4 +590,5 @@ class AppSettings(BaseModel):
     vision: VisionSettings = Field(default_factory=VisionSettings)
     tts: TTSSettings = Field(default_factory=TTSSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    island: IslandSettings = Field(default_factory=IslandSettings)
     debug: DebugSettings = Field(default_factory=DebugSettings)

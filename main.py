@@ -28,6 +28,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from app.dynamic_island import DynamicIslandWidget
+from app.hotkey import GlobalHotkeyFilter, parse_hotkey
 from app.llm_bridge import LLMResponseBridge
 from app.main_window import MainWindow
 from app.transcript_bridge import TranscriptBridge
@@ -217,6 +219,41 @@ def main() -> int:
         logger.exception("Could not start the Aura glow renderer — falling back to no visuals.")
         aura = AuraController(renderer=NullAuraRenderer())
         aura.start()
+
+    # Milestone 10, Part B: the Dynamic Island widget (Part A) gets its
+    # first real activation triggers here -- a global hotkey and the
+    # existing wake word (below, in on_wake_word_detected). Always
+    # constructed (like `aura` above) so every later call site can call
+    # island.expand()/collapse() unconditionally rather than threading
+    # `settings.island.enabled` None-checks through them; only whether
+    # it's ever shown, and whether the hotkey is registered, are gated
+    # on that setting.
+    island = DynamicIslandWidget()
+    if settings.island.enabled:
+        island.show()
+    else:
+        logger.info(
+            "Dynamic Island disabled (island.enabled=false in config) — "
+            "widget constructed but not shown."
+        )
+
+    hotkey_filter = None
+    if settings.island.enabled:
+        try:
+            modifiers, vk = parse_hotkey(settings.island.hotkey)
+            hotkey_filter = GlobalHotkeyFilter(hotkey_id=1, modifiers=modifiers, vk=vk)
+            if hotkey_filter.is_registered:
+                app.installNativeEventFilter(hotkey_filter)
+                hotkey_filter.activated.connect(island.toggle)
+            # If registration failed, GlobalHotkeyFilter already logged
+            # why -- the island remains fully usable via the wake word.
+        except ValueError:
+            logger.exception(
+                "Could not parse island.hotkey=%r — skipping global hotkey "
+                "registration.",
+                settings.island.hotkey,
+            )
+            hotkey_filter = None
 
     # Bridges: audio/worker threads -> Qt main thread. See
     # app/wake_word_bridge.py, app/transcript_bridge.py, and
@@ -410,6 +447,8 @@ def main() -> int:
         turn.start_stage("stt")
         current_turn["timer"] = turn
         aura.set_state(AuraState.LISTENING)
+        if settings.island.expand_on_wake_word:
+            island.expand()
 
     def _build_prompt_with_screen_context(text: str) -> str | None:
         # Runs on the same worker thread as generation (see _generate_worker).
@@ -675,6 +714,7 @@ def main() -> int:
             logger.warning("No LLM available — skipping generation.")
             window.show_response("(No LLM available this session — see logs.)")
             aura.set_state(AuraState.IDLE)
+            island.collapse()
             if turn is not None:
                 logger.info("Turn latency: %s", turn.summary())
                 current_turn["timer"] = None
@@ -707,6 +747,7 @@ def main() -> int:
                 logger.info("Turn latency: %s", turn.summary())
                 current_turn["timer"] = None
             aura.set_state(AuraState.IDLE)
+            island.collapse()
 
     def on_llm_failed(message: str) -> None:
         # Runs on the main thread.
@@ -720,6 +761,7 @@ def main() -> int:
             logger.info("Turn latency (failed): %s", turn.summary())
             current_turn["timer"] = None
         aura.set_state(AuraState.ERROR)
+        island.collapse()
 
     def on_tts_finished() -> None:
         # Runs on the main thread. Playback ended (naturally, or via
@@ -737,6 +779,7 @@ def main() -> int:
             current_turn["timer"] = None
         current_turn["speaking_turn"] = None
         aura.set_state(AuraState.IDLE)
+        island.collapse()
 
     def on_tts_failed(message: str) -> None:
         # Runs on the main thread. The text response already reached the
@@ -752,6 +795,7 @@ def main() -> int:
             current_turn["timer"] = None
         current_turn["speaking_turn"] = None
         aura.set_state(AuraState.IDLE)
+        island.collapse()
 
     def on_no_speech_detected() -> None:
         # Runs on the main thread. Wake word fired but nothing was said
@@ -765,6 +809,7 @@ def main() -> int:
             logger.info("Turn latency (no speech): %s", turn.summary())
             current_turn["timer"] = None
         aura.set_state(AuraState.IDLE)
+        island.collapse()
 
     def on_target_box_found(x: int, y: int, w: int, h: int) -> None:
         # Runs on the main thread. Milestone 7, Part B.3: locate() found
@@ -821,6 +866,9 @@ def main() -> int:
 
     exit_code = app.exec()
 
+    if hotkey_filter is not None:
+        hotkey_filter.unregister()
+        app.removeNativeEventFilter(hotkey_filter)
     if voice_service is not None:
         voice_service.stop()
     if tts_engine is not None:
