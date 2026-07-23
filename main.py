@@ -336,6 +336,7 @@ def main() -> int:
                 local_mmproj_path=settings.vision.local_mmproj_path,
                 n_ctx=settings.vision.n_ctx,
                 n_gpu_layers=settings.vision.n_gpu_layers,
+                n_threads=settings.vision.n_threads,
             )
         except RuntimeError:
             logger.exception(

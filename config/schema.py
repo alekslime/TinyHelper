@@ -282,8 +282,21 @@ class VisionSettings(BaseModel):
             "vision cost today."
         ),
     )
+    n_threads: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "CPU threads for the vision model's Llama() instance. Since the "
+            "CLIP/mmproj image encoder is always CPU-bound (see n_gpu_layers "
+            "above), this is a real lever unlike n_gpu_layers. Default (4) "
+            "targets physical-core count on a 4-core/8-thread i7-6820HQ -- "
+            "hyperthreads add scheduling overhead without real extra "
+            "throughput for this kind of matrix-heavy work. Tune to your "
+            "own CPU's physical core count if different."
+        ),
+    )
     max_image_dimension: int | None = Field(
-        default=512,
+        default=384,
         ge=64,
         description=(
             "Downscale the captured screenshot so its longer side is at "
@@ -304,8 +317,13 @@ class VisionSettings(BaseModel):
             "unconfirmed guesses. 1280 was tried first and only bought "
             "~2.4x (234s -> ~96s per one two-data-point comparison, "
             "different vision model though, so not fully apples-to-"
-            "apples) -- 512 is the better cost/quality tradeoff found so "
-            "far. Tesseract OCR (ocr_enabled below) always runs against "
+            "apples) -- 512 was the better cost/quality tradeoff found on "
+            "that (faster CPU) test machine. Lowered further to 384 on "
+            "2026-07-17 for the i7-6820HQ laptop target, which is "
+            "meaningfully slower -- NOT YET VALIDATED on real hardware at "
+            "this value; expect a further speed gain at some additional "
+            "caption vagueness, revert toward 512 if quality degrades too "
+            "much. Tesseract OCR (ocr_enabled below) always runs against "
             "the *original*, un-downscaled capture, so verbatim on-screen "
             "text reading is unaffected either way -- only the vision "
             "model's scene description (and locate(), if enabled) sees "
@@ -313,9 +331,18 @@ class VisionSettings(BaseModel):
         ),
     )
     max_tokens: int = Field(
-        default=256,
+        default=100,
         ge=1,
-        description="Maximum tokens to generate per screenshot description.",
+        description=(
+            "Maximum tokens to generate per screenshot description. Lowered "
+            "from 256 on 2026-07-17 after a real turn generated 507 "
+            "characters despite the vision system prompt's own stated "
+            "400-character budget -- 100 tokens is roughly 350-400 chars of "
+            "English, matching that budget more strictly. Also shortens "
+            "spoken TTS playback time directly, since that stage's "
+            "duration is dominated by audio length, not synthesis "
+            "overhead -- see docs/DECISIONS.md."
+        ),
     )
     repeat_penalty: float = Field(
         default=1.3,
